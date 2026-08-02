@@ -43,31 +43,45 @@ def exif_bytes(dt: str, gps: tuple[float, float] | None) -> bytes:
     return exif.tobytes()
 
 
-def base_scene(seed_hue: int) -> Image.Image:
-    """Colorful structured scene: gradient sky + 'sun' + ridges — sharp features."""
+def base_scene(seed: int) -> Image.Image:
+    """Structurally distinct scene per seed — phash (grayscale DCT) must differ
+    across seeds, so geometry varies, not just color."""
+    import random
+
+    rng = random.Random(seed * 7919 + 13)
     w, h = 1280, 960
     img = Image.new("RGB", (w, h))
     px = img.load()
+    angle = rng.uniform(0.5, 6.0)
+    phase = rng.uniform(0, 6.28)
     for y in range(h):
         for x in range(0, w, 4):
-            r = int(120 + 100 * math.sin((x / w) * 3 + seed_hue))
-            g = int(80 + 80 * (y / h))
-            b = int(180 - 120 * (y / h))
+            v = math.sin((x / w) * angle + (y / h) * rng.random() * 2 + phase)
+            r = int(120 + 100 * v)
+            g = int(60 + 140 * ((y / h + seed * 0.13) % 1.0))
+            b = int(200 - 150 * abs(v))
             for dx in range(4):
                 if x + dx < w:
                     px[x + dx, y] = (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
     draw = ImageDraw.Draw(img)
-    draw.ellipse((w * 0.62, h * 0.12, w * 0.80, h * 0.36), fill=(255, 210, 90))
-    for i in range(7):
-        x0 = int(w * 0.02 + i * w * 0.14)
-        draw.polygon(
-            [(x0, h), (x0 + int(w * 0.10), int(h * 0.55) + (i % 3) * 40), (x0 + int(w * 0.20), h)],
-            fill=(30 + i * 10, 60 + i * 8, 40 + i * 6),
-        )
-    for i in range(60):  # texture for sharpness
-        x = (i * 97) % w
-        y = int(h * 0.6) + (i * 53) % int(h * 0.4)
-        draw.rectangle((x, y, x + 6, y + 6), fill=(255 - i * 3 % 200, i * 5 % 255, 90))
+    # seed-dependent geometry: blocks / discs / stripes in random layouts
+    for _ in range(rng.randint(6, 14)):
+        x0, y0 = rng.randint(0, w - 200), rng.randint(0, h - 200)
+        size = rng.randint(60, 260)
+        color = (rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255))
+        shape = rng.choice(["rect", "disc", "tri"])
+        if shape == "rect":
+            draw.rectangle((x0, y0, x0 + size, y0 + size), fill=color)
+        elif shape == "disc":
+            draw.ellipse((x0, y0, x0 + size, y0 + size), fill=color)
+        else:
+            draw.polygon([(x0, y0 + size), (x0 + size // 2, y0), (x0 + size, y0 + size)],
+                         fill=color)
+    for i in range(80):  # fine texture for sharpness scoring
+        x = rng.randint(0, w - 8)
+        y = rng.randint(0, h - 8)
+        draw.rectangle((x, y, x + 5, y + 5),
+                       fill=(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)))
     return img
 
 
@@ -90,6 +104,13 @@ def main() -> None:
 
     img4 = base_scene(4).filter(ImageFilter.GaussianBlur(6))  # low-quality: heavy blur
     save(img4, "img4.jpg", 10, 40, quality=70)
+
+    # extra distinct scenes so shuffle has fresh candidates (P2 e2e needs
+    # candidates >= slots * 1.4 for the 40% shuffle-difference floor)
+    for i in range(10):
+        hour = 11 + (45 + i * 7) // 60
+        minute = (45 + i * 7) % 60
+        save(base_scene(6 + i * 3), f"extra{i + 1}.jpg", hour, minute)
 
     # P6 bg-remove subject: red disc on plain green
     subject = Image.new("RGB", (640, 640), (40, 180, 60))

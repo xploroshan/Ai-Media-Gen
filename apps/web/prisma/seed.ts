@@ -3,9 +3,20 @@
  * placeholders held in DB, admin-editable; verified against fal catalog in P5),
  * and a demo admin user. Idempotent (upserts).
  */
+import { createReadStream, existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import path from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 const prisma = new PrismaClient();
+
+const S3_DEFAULTS = {
+  endpoint: process.env.S3_ENDPOINT ?? "http://localhost:9000",
+  accessKeyId: process.env.S3_ACCESS_KEY ?? "minioadmin",
+  secretAccessKey: process.env.S3_SECRET_KEY ?? "minioadmin",
+  region: process.env.S3_REGION ?? "us-east-1",
+};
 
 const VIBES = [
   {
@@ -155,7 +166,62 @@ async function main() {
     });
   }
 
-  console.log("Seeded: vibes, platform presets, gen models, demo admin");
+  await seedMusicTrack();
+
+  console.log("Seeded: vibes, platform presets, gen models, demo admin, music");
+}
+
+/**
+ * Seed music: uploads the generated 120 bpm fixture track (dev/CI). Real CC0
+ * tracks come via scripts/fetch_seed_music.py + assets/music/ (same flow).
+ */
+async function seedMusicTrack() {
+  const candidates = [
+    { file: "../../e2e/fixtures/music.mp3", title: "Fixture Beat 120", license: "CC0 (synthetic)" },
+    { file: "../../assets/music/seed-upbeat.mp3", title: "Seed Upbeat", license: "CC0" },
+  ];
+  const s3 = new S3Client({
+    endpoint: S3_DEFAULTS.endpoint,
+    region: S3_DEFAULTS.region,
+    credentials: {
+      accessKeyId: S3_DEFAULTS.accessKeyId,
+      secretAccessKey: S3_DEFAULTS.secretAccessKey,
+    },
+    forcePathStyle: true,
+  });
+  const bucketDerived = process.env.S3_BUCKET_DERIVED ?? "derived";
+
+  for (const cand of candidates) {
+    const abs = path.resolve(__dirname, cand.file);
+    if (!existsSync(abs)) continue;
+    const existing = await prisma.musicTrack.findFirst({ where: { title: cand.title } });
+    if (existing) continue;
+    const key = `_seed/${path.basename(abs)}`;
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: bucketDerived,
+        Key: key,
+        Body: createReadStream(abs),
+        ContentLength: (await stat(abs)).size,
+        ContentType: "audio/mpeg",
+      }),
+    );
+    const track = await prisma.musicTrack.create({
+      data: {
+        title: cand.title,
+        storageKey: `${bucketDerived}/${key}`,
+        durationSec: 30,
+        license: cand.license,
+        attribution: null,
+        vibeTags: ["travel-cinematic", "birthday-fun", "product-promo"],
+      },
+    });
+    // worker computes real beat times
+    await prisma.job.create({
+      data: { type: "beats", payload: { assetId: track.id }, priority: 6 },
+    });
+    console.log(`  music track seeded: ${cand.title}`);
+  }
 }
 
 main()
