@@ -101,6 +101,7 @@ def _video_chain(idx: int, plan: ClipPlan, w: int, h: int, fps: float) -> str:
         if plan.pad > 0.001:
             parts.append(f"tpad=stop_mode=clone:stop_duration={plan.pad:.4f}")
         parts.append(f"trim=end={total:.4f}")
+        parts.append("settb=AVTB")  # xfade requires identical timebases on both inputs
         return ",".join(parts) + label
     # image: kenBurns via zoompan (§6.6.1)
     kb = clip.get("kenBurns") or {"fromScale": 1.0, "toScale": 1.0, "panX": 0, "panY": 0}
@@ -114,7 +115,7 @@ def _video_chain(idx: int, plan: ClipPlan, w: int, h: int, fps: float) -> str:
         f"[{idx}:v]scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,"
         f"crop={w * 2}:{h * 2},"
         f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={frames}:s={w}x{h}:fps={fps:g},"
-        f"setsar=1,trim=end={total:.4f}"
+        f"setsar=1,trim=end={total:.4f},settb=AVTB"
         + f"[v{idx}]"
     )
 
@@ -166,13 +167,13 @@ def build_plan(
         out = f"[x{i}]"
         seg_len = float(clips[i]["duration"]) + plans[i].ext
         if t_type == "cut":
-            graph.append(f"{cur}{nxt}concat=n=2:v=1:a=0{out}")
+            graph.append(f"{cur}{nxt}concat=n=2:v=1:a=0,settb=AVTB{out}")
             cur_len = cur_len + seg_len
         else:
             offset = float(clips[i]["timelineStart"])
             graph.append(
                 f"{cur}{nxt}xfade=transition={XFADE_NAME.get(t_type, 'fade')}:"
-                f"duration={t_dur:.3f}:offset={offset:.4f}{out}"
+                f"duration={t_dur:.3f}:offset={offset:.4f},settb=AVTB{out}"
             )
             cur_len = offset + seg_len
         cur = out
@@ -207,7 +208,7 @@ def build_plan(
         graph.append(
             f"color=c=0x0b0b0f:s={w}x{h}:r={fps:g}:d={OUTRO_SEC},"
             f"drawtext=text='Made with ReelForge':fontcolor=white:fontsize={int(h * 0.045)}:"
-            f"x=(w-text_w)/2:y=(h-text_h)/2,setsar=1[outro]"
+            f"x=(w-text_w)/2:y=(h-text_h)/2,setsar=1,settb=AVTB[outro]"
         )
         graph.append(f"{cur}[outro]concat=n=2:v=1:a=0[vfin]")
         cur = "[vfin]"
