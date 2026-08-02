@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
+import { ExportDialog } from "./export-dialog";
 
 type ProjectData = {
   id: string;
@@ -27,6 +28,7 @@ const STEERING_CHIPS = [
 
 export function ProjectPlayer({ projectId }: { projectId: string }) {
   const [chips, setChips] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
   const { data, mutate } = useSWR<ProjectData>(`/api/projects/${projectId}`, fetcher, {
     refreshInterval: (latest) => (latest?.activeJob ? 2000 : 0),
   });
@@ -148,7 +150,23 @@ export function ProjectPlayer({ projectId }: { projectId: string }) {
             </Button>
           </a>
         ) : null}
+        <Button
+          variant="secondary"
+          disabled={busy || !data.previewUrl}
+          onClick={() => setExporting(true)}
+          data-testid="open-export"
+        >
+          Export
+        </Button>
       </div>
+
+      {exporting ? (
+        <ExportDialog
+          projectId={projectId}
+          aspect={data.aspect}
+          onClose={() => setExporting(false)}
+        />
+      ) : null}
     </div>
   );
 }

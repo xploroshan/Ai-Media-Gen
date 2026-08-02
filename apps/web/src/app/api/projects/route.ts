@@ -60,6 +60,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(apiError("bad_request", "No ready assets selected"), { status: 400 });
   }
 
+  // free plan: 5 auto-edits per month, soft limit (SPEC §9) — warn, don't block
+  const profile = await prisma.profile.findUnique({ where: { id: session.user.id } });
+  let softLimitReached = false;
+  if ((profile?.plan ?? "free") === "free") {
+    const monthStart = new Date();
+    monthStart.setUTCDate(1);
+    monthStart.setUTCHours(0, 0, 0, 0);
+    const autoEditsThisMonth = await prisma.job.count({
+      where: {
+        type: "autoedit_generate",
+        ownerId: session.user.id,
+        createdAt: { gte: monthStart },
+      },
+    });
+    softLimitReached = autoEditsThisMonth >= 5;
+  }
+
   const seed = Math.floor(Math.random() * 2 ** 31);
   const project = await prisma.project.create({
     data: {
@@ -85,7 +102,7 @@ export async function POST(req: NextRequest) {
     },
     { ownerId: session.user.id, priority: 3 },
   );
-  return NextResponse.json({ projectId: project.id, jobId });
+  return NextResponse.json({ projectId: project.id, jobId, softLimitReached });
 }
 
 /** GET /api/projects — list own projects. */

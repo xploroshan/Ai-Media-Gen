@@ -22,8 +22,24 @@ COPY requirements.txt requirements-media.txt* ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ -f requirements-media.txt ]; then pip install --no-cache-dir -r requirements-media.txt; fi
 
-# Pre-bake model weights (CLIP ViT-B/32 + BlazeFace) so first analyze job doesn't stall
-ENV MODEL_CACHE_DIR=/models
+# Image-studio deps. basicsr/realesrgan/simple-lama ship stale dependency pins
+# (old Pillow with no cp312 wheels, tb-nightly, unused facexlib/gfpgan), so they
+# are installed --no-deps with their true runtime deps in requirements-media2.txt.
+# basicsr's sdist imports torch at build time -> --no-build-isolation.
+COPY requirements-media2.txt ./
+RUN pip install --no-cache-dir -r requirements-media2.txt
+RUN pip install --no-cache-dir --no-build-isolation --no-deps \
+    "basicsr==1.4.2" "realesrgan==0.3.0" "simple-lama-inpainting==0.1.2"
+# basicsr imports the removed torchvision.transforms.functional_tensor -> shim it
+RUN python -c "import pathlib, torchvision; \
+p = pathlib.Path(torchvision.__file__).parent / 'transforms' / 'functional_tensor.py'; \
+p.exists() or p.write_text('from torchvision.transforms.functional import rgb_to_grayscale\n')"
+RUN python -c "import basicsr, realesrgan, simple_lama_inpainting, rembg; print('image deps ok')"
+
+# Pre-bake model weights so first jobs don't stall on downloads
+ENV MODEL_CACHE_DIR=/models \
+    U2NET_HOME=/models/u2net \
+    TORCH_HOME=/models/torch
 RUN python - <<'PY' || echo "model prefetch skipped (offline build)"
 import os, urllib.request
 cache = os.environ["MODEL_CACHE_DIR"]
@@ -47,6 +63,27 @@ try:
     print("faster-whisper small int8 cached")
 except Exception as e:
     print("whisper prefetch failed:", e)
+try:
+    from rembg import new_session
+    new_session("isnet-general-use")
+    print("rembg isnet-general-use cached")
+except Exception as e:
+    print("rembg prefetch failed:", e)
+try:
+    from simple_lama_inpainting import SimpleLama
+    SimpleLama()
+    print("LaMa big-lama cached")
+except Exception as e:
+    print("LaMa prefetch failed:", e)
+try:
+    url = ("https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/"
+           "RealESRGAN_x2plus.pth")
+    dest = os.path.join(cache, "RealESRGAN_x2plus.pth")
+    if not os.path.exists(dest):
+        urllib.request.urlretrieve(url, dest)
+    print("RealESRGAN x2plus cached")
+except Exception as e:
+    print("RealESRGAN prefetch failed:", e)
 PY
 
 COPY pyproject.toml ./
