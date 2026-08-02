@@ -41,6 +41,12 @@ try:
     print("BlazeFace model cached")
 except Exception as e:
     print("BlazeFace prefetch failed:", e)
+try:
+    from faster_whisper import WhisperModel
+    WhisperModel("small", device="cpu", compute_type="int8", download_root=cache)
+    print("faster-whisper small int8 cached")
+except Exception as e:
+    print("whisper prefetch failed:", e)
 PY
 
 COPY pyproject.toml ./

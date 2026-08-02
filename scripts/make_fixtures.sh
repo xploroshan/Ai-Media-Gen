@@ -36,14 +36,25 @@ ffmpeg -y -v error \
   -f lavfi -i "aevalsrc=${BEAT_EXPR}:s=44100:d=30" \
   -c:a libmp3lame -q:a 4 "$OUT/music.mp3"
 
-echo "==> speech.wav (5s spoken-ish tone pattern placeholder; P4 replaces via espeak if present)"
-if command -v espeak >/dev/null 2>&1; then
-  espeak -w "$OUT/speech.wav" -s 140 "hello world this is a reel forge caption test"
+echo "==> speech fixtures (espeak-ng if available; tone placeholder otherwise)"
+SPEECH_TEXT="hello world welcome to the reel forge caption test today"
+if command -v espeak-ng >/dev/null 2>&1; then
+  espeak-ng -w "$OUT/speech-raw.wav" -s 130 "$SPEECH_TEXT"
+elif command -v espeak >/dev/null 2>&1; then
+  espeak -w "$OUT/speech-raw.wav" -s 130 "$SPEECH_TEXT"
 else
   ffmpeg -y -v error -f lavfi \
     -i 'aevalsrc=0.4*sin(2*PI*180*t)*(0.5+0.5*sin(2*PI*3*t)):s=16000:d=5' \
-    "$OUT/speech.wav"
+    "$OUT/speech-raw.wav"
 fi
+ffmpeg -y -v error -i "$OUT/speech-raw.wav" -ar 16000 -ac 1 "$OUT/speech.wav"
+# speech VIDEO: moving pattern + the spoken audio, for transcribe→caption e2e
+ffmpeg -y -v error \
+  -f lavfi -i "testsrc2=size=1280x720:rate=30" \
+  -i "$OUT/speech.wav" \
+  -metadata creation_time="2026-07-15T12:00:00Z" \
+  -c:v libx264 -preset veryfast -crf 23 -c:a aac -shortest "$OUT/speech.mp4"
+rm -f "$OUT/speech-raw.wav"
 
 echo "fixtures ready in $OUT:"
 ls -la "$OUT"

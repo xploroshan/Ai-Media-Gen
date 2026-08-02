@@ -215,7 +215,10 @@ def build_plan(
 
     graph.append(f"{cur}format=yuv420p[vout]")
 
-    # audio (§6.6.6): music trimmed/looped to duration, master loudnorm
+    # audio (§6.6.6): music trimmed/looped to duration, ducked under speech,
+    # mixed with speech-bearing clip audio, master loudnorm
+    speech = spec.get("_speech") or {}  # {windows: [(s,e)], clipAudio: [{inputArgs, filter}]}
+    music_label = None
     if music is not None:
         a_idx = len(rp.inputs)
         rp.inputs.append(
@@ -223,10 +226,53 @@ def build_plan(
              str(music["path"])]
         )
         gain = float(music.get("gainDb", 0.0))
+        chain = [
+            f"[{a_idx}:a]atrim=0:{total_timeline:.4f}",
+            "asetpts=PTS-STARTPTS",
+            f"volume={gain:.1f}dB",
+        ]
+        from worker.lib.ducking import duck_volume_filter
+
+        duck = duck_volume_filter(
+            speech.get("windows") or [], float(music.get("duckUnderSpeechDb", -10.0))
+        )
+        if duck:
+            chain.append(duck)
+        graph.append(",".join(chain) + "[amusic]")
+        music_label = "[amusic]"
+
+    speech_labels: list[str] = []
+    for spec_clip in speech.get("clips") or []:
+        # clip source audio aligned to the timeline (only speech-bearing clips)
+        a_idx = len(rp.inputs)
+        rp.inputs.append(["-i", str(spec_clip["path"])])
+        src_in = float(spec_clip["srcIn"])
+        src_out = float(spec_clip["srcOut"])
+        speed = float(spec_clip.get("speed", 1.0)) or 1.0
+        delay_ms = int(float(spec_clip["timelineStart"]) * 1000)
+        chain = [
+            f"[{a_idx}:a]atrim=start={src_in:.3f}:end={src_out:.3f}",
+            "asetpts=PTS-STARTPTS",
+        ]
+        if abs(speed - 1.0) > 1e-6 and 0.5 <= speed <= 2.0:
+            chain.append(f"atempo={speed:.4f}")
+        chain.append(f"adelay={delay_ms}|{delay_ms}")
+        label = f"[aspeech{len(speech_labels)}]"
+        graph.append(",".join(chain) + label)
+        speech_labels.append(label)
+
+    mix_inputs = ([music_label] if music_label else []) + speech_labels
+    if mix_inputs:
+        if len(mix_inputs) == 1:
+            mixed = mix_inputs[0]
+        else:
+            graph.append(
+                "".join(mix_inputs)
+                + f"amix=inputs={len(mix_inputs)}:duration=longest:normalize=0[amixed]"
+            )
+            mixed = "[amixed]"
         graph.append(
-            f"[{a_idx}:a]atrim=0:{total_timeline:.4f},asetpts=PTS-STARTPTS,"
-            f"volume={gain:.1f}dB,"
-            f"apad=pad_dur={OUTRO_SEC if watermark_on else 0.01},"
+            f"{mixed}apad=pad_dur={OUTRO_SEC if watermark_on else 0.01},"
             f"atrim=0:{expected:.4f},"
             "loudnorm=I=-14:TP=-1.5[aout]"
         )

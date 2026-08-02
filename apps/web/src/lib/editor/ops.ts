@@ -204,6 +204,34 @@ export function replaceMusic(spec: EditSpec, musicAssetId: string | null): EditS
   return next;
 }
 
+export function setCaptions(spec: EditSpec, patch: Partial<EditSpec["captions"]>): EditSpec {
+  const next = clone(spec);
+  Object.assign(next.captions, patch);
+  return next;
+}
+
+export function updateCaptionWord(
+  spec: EditSpec,
+  index: number,
+  patch: Partial<{ w: string; s: number; e: number }>,
+): EditSpec {
+  const next = clone(spec);
+  const word = next.captions.words[index];
+  if (!word) return spec;
+  Object.assign(word, patch);
+  if (word.e <= word.s) word.e = word.s + 0.1;
+  return next;
+}
+
+/** Shift a caption word by delta seconds (timing nudge, SPEC §7). */
+export function nudgeCaptionWord(spec: EditSpec, index: number, delta: number): EditSpec {
+  const word = spec.captions.words[index];
+  if (!word) return spec;
+  const s = Math.max(0, Math.round((word.s + delta) * 100) / 100);
+  const e = Math.max(s + 0.05, Math.round((word.e + delta) * 100) / 100);
+  return updateCaptionWord(spec, index, { s, e });
+}
+
 /** Snap a time to the nearest beat within `tolerance` seconds. */
 export function snapToBeat(time: number, beatTimes: number[], tolerance = 0.15): number {
   if (!beatTimes.length) return time;

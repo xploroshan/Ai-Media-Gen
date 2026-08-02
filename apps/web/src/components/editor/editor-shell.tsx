@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { EditSpecSchema } from "@reelforge/shared";
 import { Button } from "@/components/ui/button";
 import { useEditorStore } from "@/lib/editor/store";
+import { CaptionsPanel } from "./captions-panel";
 import { PreviewCanvas, type AssetMap } from "./preview-canvas";
 import { PropertiesPanel } from "./properties-panel";
 import { Timeline } from "./timeline";
@@ -172,6 +173,7 @@ export function EditorShell({ projectId }: { projectId: string }) {
         <div className="min-w-0 space-y-4">
           <PreviewCanvas assets={assets} />
           <Timeline assets={assets} />
+          <CaptionsPanel assets={assets} />
           {project.previewUrl ? (
             <details className="rounded-lg border border-border bg-surface p-3 text-sm">
               <summary className="cursor-pointer text-muted">Server preview render (truth)</summary>

@@ -44,6 +44,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           sceneCuts: asset.analysis.sceneCuts,
           highlights: asset.analysis.highlights,
           beatTimes: asset.analysis.beatTimes,
+          transcript: asset.analysis.transcript,
         }
       : null,
   });

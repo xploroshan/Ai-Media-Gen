@@ -51,7 +51,11 @@ def _collect_sources(spec: dict, preview: bool, tmp: Path) -> dict[str, dict]:
             if asset_id in sources:
                 continue
             row = conn.execute(
-                text("SELECT * FROM media_assets WHERE id=:id"), {"id": asset_id}
+                text(
+                    "SELECT a.*, an.transcript FROM media_assets a "
+                    "LEFT JOIN media_analysis an ON an.asset_id=a.id WHERE a.id=:id"
+                ),
+                {"id": asset_id},
             ).mappings().first()
             if row is None:
                 raise RuntimeError(f"asset {asset_id} missing")
@@ -59,8 +63,63 @@ def _collect_sources(spec: dict, preview: bool, tmp: Path) -> dict[str, dict]:
             if preview and clip["kind"] == "video" and row["proxy_key"]:
                 key = row["proxy_key"]
             local = s3.download_to_tmp(key)
-            sources[asset_id] = {"path": str(local), "duration": row["duration_sec"]}
+            sources[asset_id] = {
+                "path": str(local),
+                "duration": row["duration_sec"],
+                "transcript": _load_json(row.get("transcript")),
+            }
     return sources
+
+
+def _speech_meta(spec: dict, sources: dict[str, dict]) -> dict:
+    """Ducking windows + speech-bearing clip audio for the mixer (§6.6.6).
+
+    Windows in timeline seconds; sourced from enabled caption words and from
+    per-clip transcripts (word times mapped src→timeline through the trim).
+    """
+    from worker.lib.ducking import speech_windows
+
+    words_timeline: list[dict] = []
+    captions = spec.get("captions") or {}
+    if captions.get("enabled"):
+        words_timeline.extend(captions.get("words") or [])
+
+    speech_clips: list[dict] = []
+    video_track = next(t for t in spec["tracks"] if t["type"] == "video")
+    for clip in video_track["clips"]:
+        if clip["kind"] != "video":
+            continue
+        src = sources.get(clip["assetId"]) or {}
+        transcript = src.get("transcript") or {}
+        words = transcript.get("words") or []
+        if not words:
+            continue
+        src_in = float(clip.get("srcIn") or 0.0)
+        src_out = float(clip.get("srcOut") or 0.0)
+        speed = float(clip.get("speed", 1.0)) or 1.0
+        start = float(clip["timelineStart"])
+        in_window = [w for w in words if w["e"] > src_in and w["s"] < src_out]
+        if not in_window:
+            continue
+        speech_clips.append(
+            {
+                "path": src["path"],
+                "srcIn": src_in,
+                "srcOut": src_out,
+                "speed": speed,
+                "timelineStart": start,
+            }
+        )
+        words_timeline.extend(
+            {
+                "w": w["w"],
+                "s": start + max(0.0, (w["s"] - src_in)) / speed,
+                "e": start + max(0.0, (w["e"] - src_in)) / speed,
+            }
+            for w in in_window
+        )
+
+    return {"windows": speech_windows(words_timeline), "clips": speech_clips}
 
 
 def _collect_music(spec: dict) -> dict | None:
@@ -135,7 +194,7 @@ def _render(job: dict, final: bool) -> dict:
                                 encoding="utf-8")
 
         plan = build_plan(
-            spec,
+            {**spec, "_speech": _speech_meta(spec, sources)},
             sources,
             preview=not final,
             ass_path=ass_path,

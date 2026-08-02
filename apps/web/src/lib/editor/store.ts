@@ -34,6 +34,9 @@ type EditorState = {
   addText: (styleId?: string) => void;
   updateText: (clipId: string, patch: Partial<TextClip>) => void;
   replaceMusic: (assetId: string | null) => void;
+  setCaptions: (patch: Partial<EditSpec["captions"]>) => void;
+  updateCaptionWord: (index: number, patch: Partial<{ w: string; s: number; e: number }>) => void;
+  nudgeCaptionWord: (index: number, delta: number) => void;
 
   undo: () => void;
   redo: () => void;
@@ -131,6 +134,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const spec = get().spec;
     if (!spec) return;
     get().commit(ops.replaceMusic(spec, assetId));
+  },
+
+  setCaptions: (patch) => {
+    const spec = get().spec;
+    if (!spec) return;
+    get().commit(ops.setCaptions(spec, patch));
+  },
+
+  updateCaptionWord: (index, patch) => {
+    const spec = get().spec;
+    if (!spec) return;
+    get().commit(ops.updateCaptionWord(spec, index, patch));
+  },
+
+  nudgeCaptionWord: (index, delta) => {
+    const spec = get().spec;
+    if (!spec) return;
+    get().commit(ops.nudgeCaptionWord(spec, index, delta));
   },
 
   undo: () => {
