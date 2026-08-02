@@ -105,7 +105,8 @@ a = Image.open(${JSON.stringify(path.join(tmp, "a.png"))}).convert("L")
 b = Image.open(${JSON.stringify(path.join(tmp, "b.png"))}).convert("L")
 w, h = a.size
 diff = ImageChops.difference(a, b)
-corner = ImageStat.Stat(diff.crop((int(w*0.80), int(h*0.90), w, h))).mean[0]
+# the watermark box: 6% width, 16px offset at render size -> ~ (492..532, 934..952) at 540x960
+corner = ImageStat.Stat(diff.crop((w - 52, h - 30, w - 6, h - 6))).mean[0]
 center = ImageStat.Stat(diff.crop((int(w*0.4), int(h*0.4), int(w*0.6), int(h*0.6)))).mean[0]
 print(json.dumps({"corner": corner, "center": center}))
 `;
@@ -163,15 +164,21 @@ test.describe("P7 — plans, export, admin, PWA", () => {
     });
     expect(adminPost.ok()).toBeTruthy();
 
-    // credit adjust reflects in the user's ledger
+    // credit adjust reflects in the user's ledger (adjust to 170, then the lazy
+    // monthly grant tops a fresh creator up to the 300 allowance — SPEC §9)
     const credits = (await (await page.request.get("/api/credits")).json()) as {
       balance: number;
       ledger: { reason: string; delta: number; balanceAfter: number }[];
     };
-    expect(credits.balance).toBe(170);
     const adjust = credits.ledger.find((l) => l.reason === "admin_adjust");
     expect(adjust?.delta).toBe(50);
     expect(adjust?.balanceAfter).toBe(170);
+    expect(credits.balance).toBe(300);
+    const grant = credits.ledger.find((l) => l.reason === "monthly_grant");
+    expect(grant?.balanceAfter).toBe(300);
+    // ledger replay still reconciles
+    const replayed = [...credits.ledger].reverse().reduce((sum, row) => sum + row.delta, 0);
+    expect(replayed).toBe(credits.balance);
 
     // creator export at 1080p → no watermark, no outro
     const creatorExport = await runExport(page, projectId, "reel", "1080p");
@@ -184,7 +191,7 @@ test.describe("P7 — plans, export, admin, PWA", () => {
 
     // corner pixels differ (watermark) while center content matches
     const stats = frameDiffStats(freePath, creatorPath, tmp);
-    expect(stats.corner).toBeGreaterThan(stats.center + 2);
+    expect(stats.corner).toBeGreaterThan(stats.center + 3);
     expect(stats.center).toBeLessThan(12); // same content baseline
 
     await admin.context().close();
@@ -203,6 +210,8 @@ test.describe("P7 — plans, export, admin, PWA", () => {
     });
     expect(createRes.ok()).toBeTruthy();
     const { projectId } = (await createRes.json()) as { projectId: string };
+    // wait for the auto-edit + preview to finish (it rewrites edit_spec async)
+    await waitIdle(page, projectId);
     // targetSec is clamped to the preset max at creation (story: 60)
     const project = (await (await page.request.get(`/api/projects/${projectId}`)).json()) as {
       editSpec: { durationSec: number };

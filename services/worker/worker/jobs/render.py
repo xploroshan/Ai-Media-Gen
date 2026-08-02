@@ -16,7 +16,7 @@ from worker.lib.db import get_engine, update_progress
 from worker.lib.render import build_plan, run_render, verify_output
 from worker.lib.settings import get_settings
 
-WATERMARK_LOCAL = Path("/tmp/reelforge-watermark.png")
+WATERMARK_LOCAL = Path("/tmp/reelforge-watermark-v2.png")
 
 
 def _load_json(value: Any) -> Any:
@@ -24,20 +24,22 @@ def _load_json(value: Any) -> Any:
 
 
 def ensure_watermark() -> Path:
-    """Semi-transparent wordmark PNG (assets/watermark.png equivalent, generated)."""
+    """Wordmark PNG (assets/watermark.png equivalent, generated): white text on a
+    translucent dark plate so it stays legible on any content."""
     if WATERMARK_LOCAL.exists():
         return WATERMARK_LOCAL
     from PIL import Image, ImageDraw, ImageFont
 
     img = Image.new("RGBA", (480, 120), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 8, 478, 112), radius=28, fill=(10, 10, 16, 150))
     try:
         font = ImageFont.truetype(
             "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf", 64
         )
     except OSError:
         font = ImageFont.load_default()
-    draw.text((10, 20), "ReelForge", font=font, fill=(255, 255, 255, 165))
+    draw.text((28, 22), "ReelForge", font=font, fill=(255, 255, 255, 230))
     img.save(WATERMARK_LOCAL)
     return WATERMARK_LOCAL
 
