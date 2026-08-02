@@ -1,5 +1,6 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@/lib/db";
+import { CreditsLedger } from "@/components/settings/credits-ledger";
 
 export default async function SettingsPage() {
   const session = await requireSession();
@@ -22,6 +23,9 @@ export default async function SettingsPage() {
           <dd>{profile?.creditsBalance ?? 0}</dd>
         </div>
       </dl>
+      <div className="mt-8 max-w-2xl">
+        <CreditsLedger />
+      </div>
     </div>
   );
 }
