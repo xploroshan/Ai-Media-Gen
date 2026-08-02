@@ -69,7 +69,8 @@ services:
       - "8001:8001"
     volumes:
       - ../services/worker/worker:/app/worker # live-reload mount (dev)
-      - model-cache:/models
+      # model weights are baked into the image at /models — no volume, or it would
+      # shadow them with an empty dir and force a re-download on first use
     healthcheck:
       test:
         [
@@ -84,4 +85,3 @@ services:
 volumes:
   pg-data:
   minio-data:
-  model-cache:
