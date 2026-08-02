@@ -1,0 +1,289 @@
+// SPEC.md §4 — authoritative data model. snake_case in DB via @map/@@map.
+// Prisma owns migrations; the worker reads/writes these tables via SQLAlchemy Core.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- better-auth managed ----------
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false) @map("email_verified")
+  image         String?
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  sessions      Session[]
+  accounts      Account[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime @map("expires_at")
+  token     String   @unique
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  userId                String    @map("user_id")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+// ---------- application ----------
+
+model Profile {
+  id             String   @id // = auth user id
+  displayName    String?  @map("display_name")
+  locale         String   @default("en") // "en" | "hi"
+  personaHint    String?  @map("persona_hint") // self|audience|business|client
+  plan           String   @default("free") // free|creator|business (flag only, no billing)
+  creditsBalance Int      @default(120) @map("credits_balance")
+  isAdmin        Boolean  @default(false) @map("is_admin")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("profiles")
+}
+
+model MediaAsset {
+  id          String    @id @default(cuid())
+  ownerId     String    @map("owner_id")
+  kind        String // image|video|audio
+  status      String // uploading|analyzing|ready|failed
+  storageKey  String    @map("storage_key") // originals/<owner>/<id>.<ext>
+  thumbKey    String?   @map("thumb_key")
+  proxyKey    String?   @map("proxy_key") // 540p h264 for video editor preview
+  filename    String
+  bytes       Int
+  width       Int?
+  height      Int?
+  durationSec Float?    @map("duration_sec")
+  fps         Float?
+  takenAt     DateTime? @map("taken_at")
+  gpsLat      Float?    @map("gps_lat")
+  gpsLng      Float?    @map("gps_lng")
+  phash       String? // 64-bit hex perceptual hash (images + video keyframe)
+  synthetic   Boolean   @default(false) // true for AI-generated
+  eventId     String?   @map("event_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  analysis MediaAnalysis?
+
+  @@index([ownerId, status])
+  @@index([ownerId, takenAt])
+  @@map("media_assets")
+}
+
+model MediaAnalysis {
+  assetId       String     @id @map("asset_id")
+  asset         MediaAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  qualityScore  Float?     @map("quality_score") // 0..1 (§6.2)
+  blurVar       Float?     @map("blur_var")
+  exposureScore Float?     @map("exposure_score")
+  tags          Json? // [{label, score}] top-8 from CLIP label set
+  clipEmbedding Json?      @map("clip_embedding") // float[512] (JSONB — DECISIONS.md #4)
+  facesCount    Int?       @map("faces_count")
+  faceAreaRatio Float?     @map("face_area_ratio")
+  sceneCuts     Json?      @map("scene_cuts") // video: [secs]
+  highlights    Json? // video: [{start,end,score}] top-5
+  beatTimes     Json?      @map("beat_times") // audio: [secs]
+  transcript    Json? // {lang, words:[{w,s,e}]}
+
+  @@map("media_analysis")
+}
+
+model Event {
+  id       String   @id @default(cuid())
+  ownerId  String   @map("owner_id")
+  title    String
+  startAt  DateTime @map("start_at")
+  endAt    DateTime @map("end_at")
+  assetIds Json     @map("asset_ids") // string[]
+
+  @@index([ownerId, startAt])
+  @@map("events")
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  ownerId   String   @map("owner_id")
+  title     String   @default("Untitled")
+  aspect    String   @default("9:16") // 9:16|1:1|4:5|16:9
+  vibeId    String?  @map("vibe_id")
+  presetId  String?  @map("preset_id")
+  editSpec  Json     @map("edit_spec") // §5 schema — the core artifact
+  status    String   @default("draft") // draft|rendering|ready
+  seed      Int      @default(0) // auto-edit determinism + shuffle
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([ownerId, updatedAt])
+  @@map("projects")
+}
+
+model Job {
+  id         String    @id @default(cuid())
+  type       String // analyze_media|detect_events|autoedit_generate|render_preview|
+  //                     render_final|transcribe|beats|generate_ai|image_op
+  status     String    @default("queued") // queued|running|done|failed|canceled
+  priority   Int       @default(5) // 1 highest
+  payload    Json
+  result     Json?
+  error      String?
+  attempts   Int       @default(0)
+  lockedBy   String?   @map("locked_by")
+  lockedAt   DateTime? @map("locked_at")
+  runAfter   DateTime? @map("run_after") // retry backoff (DECISIONS.md #6)
+  ownerId    String?   @map("owner_id")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  finishedAt DateTime? @map("finished_at")
+
+  @@index([status, priority, createdAt])
+  @@map("jobs")
+}
+
+model Generation {
+  id            String   @id @default(cuid())
+  ownerId       String   @map("owner_id")
+  kind          String // t2i|i2v|t2v|tts|music
+  providerId    String   @map("provider_id") // fal|stub
+  modelSlug     String   @map("model_slug")
+  prompt        String
+  params        Json
+  creditCost    Int      @map("credit_cost")
+  status        String   @default("queued") // queued|running|done|failed|refunded
+  resultAssetId String?  @map("result_asset_id")
+  vendorCostUsd Float?   @map("vendor_cost_usd")
+  jobId         String?  @map("job_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([ownerId, createdAt])
+  @@map("generations")
+}
+
+model CreditLedger {
+  id           String   @id @default(cuid())
+  ownerId      String   @map("owner_id")
+  delta        Int // negative = spend
+  reason       String // generation|refund|signup_bonus|admin_adjust|monthly_grant
+  refId        String?  @map("ref_id") // generation id etc.
+  balanceAfter Int      @map("balance_after")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([ownerId, createdAt])
+  @@map("credit_ledger")
+}
+
+model Export {
+  id         String   @id @default(cuid())
+  projectId  String   @map("project_id")
+  ownerId    String   @map("owner_id")
+  presetId   String   @map("preset_id")
+  resolution String // 720p|1080p
+  watermark  Boolean
+  storageKey String?  @map("storage_key")
+  status     String   @default("queued")
+  ffprobe    Json? // verification snapshot
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([ownerId, createdAt])
+  @@map("exports")
+}
+
+model Vibe {
+  id        String @id
+  name      String
+  config    Json
+  sortOrder Int    @map("sort_order")
+
+  @@map("vibes")
+}
+
+model PlatformPreset {
+  id     String  @id
+  name   String
+  aspect String
+  maxSec Int     @map("max_sec")
+  recSec Int     @map("rec_sec")
+  notes  String?
+
+  @@map("platform_presets")
+}
+
+model GenModel {
+  id            String  @id @default(cuid())
+  kind          String
+  tier          String
+  providerId    String  @map("provider_id")
+  modelSlug     String  @map("model_slug")
+  creditPerUnit Int     @map("credit_per_unit")
+  unit          String
+  active        Boolean @default(true)
+
+  @@unique([kind, tier])
+  @@map("gen_models")
+}
+
+model FeatureFlag {
+  key   String @id
+  value Json
+
+  @@map("feature_flags")
+}
+
+model MusicTrack {
+  id          String  @id @default(cuid())
+  title       String
+  storageKey  String  @map("storage_key")
+  durationSec Float   @map("duration_sec")
+  beatTimes   Json?   @map("beat_times")
+  license     String
+  attribution String?
+  ownerId     String? @map("owner_id") // null = seeded library track
+  vibeTags    Json?   @map("vibe_tags") // string[] vibe ids this track suits
+
+  @@map("music_tracks")
+}

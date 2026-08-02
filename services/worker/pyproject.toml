@@ -1,0 +1,18 @@
+[project]
+name = "reelforge-worker"
+version = "1.0.0"
+description = "ReelForge background worker: media analysis, auto-edit, rendering, AI generation"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["worker/tests"]
+markers = [
+    "integration: needs live postgres/minio (docker compose up)",
+]

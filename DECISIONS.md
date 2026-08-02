@@ -1,0 +1,10 @@
+# DECISIONS.md — ambiguity resolutions (per CLAUDE.md)
+
+Choices made where SPEC.md is ambiguous or silent; simplest option consistent with its architecture.
+
+1. **Workspace root** — SPEC §2 shows the monorepo root as `reelforge/`, but the repo is `Ai-Media-Gen`. The repo root IS the monorepo root; the root package is named `reelforge`. No nested directory.
+2. **Worker Python version** — Worker Docker image is `python:3.12-slim` per SPEC §2. The dev host has Python 3.11; the container is the source of truth for pytest (`docker compose exec worker pytest`), host runs are best-effort.
+3. **CI semantics** — `.github/workflows/ci.yml` is authored per SPEC §2 (lint → typecheck → unit → e2e, StubProvider only). Phase gates are verified by running the identical suite in the dev environment; GitHub-hosted runner execution depends on the repo's Actions settings which are outside the build's control.
+4. **pgvector** — CLIP embeddings stored as JSONB (SPEC §4 allows pgvector "if extension available, else JSONB"). v1 does no ANN search, so JSONB is the simplest guaranteed path. Swap = one migration + write path change.
+5. **E2E OTP access** — SPEC §3 says dev mode prints the OTP to console. Playwright cannot reliably scrape the dev-server console, so a dev/test-only route `GET /api/dev/last-otp?email=` (404 in production builds, enabled only when `RESEND_API_KEY` is unset) exposes the last OTP issued for an email. Production behavior unchanged.
+6. **`Job.runAfter` column** — SPEC §5.3 requires exponential retry delays (30 s, 2 min) but the §4 `Job` model has no scheduled-time field. Added `runAfter DateTime?` (`run_after`); the claim query skips jobs whose `run_after` is in the future. Minimal addition needed to implement the specified semantics without abusing `lockedAt`.

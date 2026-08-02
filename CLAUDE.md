@@ -1,9 +1,11 @@
 # CLAUDE.md — ReelForge working agreement
 
 ## What this project is
+
 ReelForge v1: web app (PWA) that turns user photos/videos into beat-synced social videos (auto-edit engine), with a timeline editor, image cleanup tools, and AI generation via **fal.ai only** — nothing self-hosted beyond CPU-light OSS tooling. **SPEC.md is the single source of truth.** If code and SPEC.md disagree, SPEC.md wins; if SPEC.md is ambiguous, choose the simplest option consistent with its architecture and record the choice in `DECISIONS.md`.
 
 ## Build agreement (owner's standing instructions)
+
 1. Execute SPEC.md **phases P0→P8 in order**. Do not skip ahead; do not start a phase before the previous phase's exit tests pass in CI.
 2. Write the phase's tests **in the same phase**, run them, fix failures. A phase is done only when its exit tests are green.
 3. **Do not stop to ask permission** while work proceeds according to SPEC.md. Ask only when a genuine deviation from the spec is required — state the deviation, reason, and chosen alternative, then continue.
@@ -12,6 +14,7 @@ ReelForge v1: web app (PWA) that turns user photos/videos into beat-synced socia
 6. Never mark the project done with failing tests, partial phases, or unresolved review findings.
 
 ## Guardrails
+
 - **Licenses**: only add dependencies matching SPEC.md §12 license classes. Never add: CC-BY-NC model weights, AGPL libraries, CodeFormer, InsightFace models, MMAudio, MusicGen.
 - **No self-hosted big models.** Generative AI goes through the `GenProvider` interface. `StubProvider` is the default; `FalProvider` activates only when `FAL_KEY` is set. CI must never make external AI calls.
 - **fal.ai model slugs in SPEC §8.2 are placeholders** — verify each against the live fal catalog before wiring, and keep slugs in the `gen_models` table, never hardcoded.
@@ -22,6 +25,7 @@ ReelForge v1: web app (PWA) that turns user photos/videos into beat-synced socia
 - Sanctioned TODO markers only: `QC-HOOK`, `LLM-HOOK`, `MODERATION-HOOK`, `C2PA-HOOK`, Razorpay stub.
 
 ## Commands
+
 ```bash
 pnpm install                       # root
 docker compose -f infra/docker-compose.dev.yml up -d   # pg + minio + worker
@@ -35,6 +39,7 @@ pnpm e2e                           # Playwright (stub providers)
 ```
 
 ## Conventions
+
 - TypeScript strict; no `any`; zod at every API boundary; errors as `{error:{code,message}}`.
 - Python: ruff-clean, type hints, small pure functions in `worker/lib/` with pytest coverage; job handlers thin.
 - DB naming snake_case via Prisma `@map`; Prisma owns migrations — worker never migrates.

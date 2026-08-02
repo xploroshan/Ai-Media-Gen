@@ -1,0 +1,39 @@
+# deps
+node_modules/
+.pnpm-store/
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# builds
+.next/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# env & secrets
+.env
+.env.local
+.env.*.local
+
+# test artifacts
+e2e/fixtures/
+e2e/.artifacts/
+playwright-report/
+test-results/
+coverage/
+
+# runtime data
+minio-data/
+pg-data/
+assets/music/*.mp3
+assets/music/*.wav
+
+# local-only CA bundles (sandbox/corp proxies) — keep certs/ dir, not its contents
+services/worker/certs/*.crt
+
+# misc
+.DS_Store
+*.log

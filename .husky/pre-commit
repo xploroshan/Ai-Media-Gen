@@ -1,0 +1,1 @@
+pnpm exec prettier --check . || { echo "prettier --check failed — run: pnpm exec prettier --write ."; exit 1; }
