@@ -6,3 +6,8 @@ pnpm-lock.yaml
 services/worker
 playwright-report
 test-results
+SPEC.md
+CLAUDE.md
+README.md
+DECISIONS.md
+REVIEW.md

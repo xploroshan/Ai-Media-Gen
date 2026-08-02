@@ -2,19 +2,18 @@
 
 **For execution by Claude Code. Read fully before writing any code. CLAUDE.md contains the working agreement; this file contains everything to build.**
 
-|              |                                                                                                                                                                                                                                                                           |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Version      | 1.0 — 2 Aug 2026                                                                                                                                                                                                                                                          |
-| Product      | ReelForge: turn user photos/videos into polished social videos (auto-edit engine) + AI generation via external APIs                                                                                                                                                       |
-| Target       | **Web app (PWA) + API + background workers.** No native mobile in this build.                                                                                                                                                                                             |
-| Hosting      | **Railway** (all services) — web, worker, Postgres, MinIO                                                                                                                                                                                                                 |
-| Hard rule    | **No self-hosted large AI models.** All generative AI through fal.ai (with a stub provider for dev/CI). Only CPU-light OSS tooling runs in our containers (FFmpeg, sharp, rembg, PySceneDetect, librosa, faster-whisper-small, CLIP ViT-B/32, IOPaint/LaMa, Real-ESRGAN). |
-| License rule | Every dependency must be commercially safe (MIT/Apache/BSD/LGPL-dynamic). The register in §12 is the allowlist; **do not add deps with non-commercial weights (MMAudio, MusicGen, CodeFormer, InsightFace models, FLUX [dev]) or AGPL code (A1111, Essentia)**.           |
+| | |
+|---|---|
+| Version | 1.0 — 2 Aug 2026 |
+| Product | ReelForge: turn user photos/videos into polished social videos (auto-edit engine) + AI generation via external APIs |
+| Target | **Web app (PWA) + API + background workers.** No native mobile in this build. |
+| Hosting | **Railway** (all services) — web, worker, Postgres, MinIO |
+| Hard rule | **No self-hosted large AI models.** All generative AI through fal.ai (with a stub provider for dev/CI). Only CPU-light OSS tooling runs in our containers (FFmpeg, sharp, rembg, PySceneDetect, librosa, faster-whisper-small, CLIP ViT-B/32, IOPaint/LaMa, Real-ESRGAN). |
+| License rule | Every dependency must be commercially safe (MIT/Apache/BSD/LGPL-dynamic). The register in §12 is the allowlist; **do not add deps with non-commercial weights (MMAudio, MusicGen, CodeFormer, InsightFace models, FLUX [dev]) or AGPL code (A1111, Essentia)**. |
 
 ## 0. Scope
 
 ### 0.1 In scope (phases P0–P8)
-
 1. Auth (email OTP + Google), profiles, plans (feature-flag stub — no live payments)
 2. Media library: chunked upload, CPU analysis pipeline (metadata, thumbs, proxies, quality scoring, scene detection, CLIP tags, near-dupe detection, event clustering), search
 3. **Auto-Edit engine**: media + Vibe + platform preset → beat-synced edit → server-rendered video (the flagship)
@@ -26,12 +25,11 @@
 9. Admin page: job dashboard, feature flags, model routing table, credit adjustments
 
 ### 0.2 Explicitly OUT of scope (do not build, do not stub beyond noted interfaces)
-
 - Native Android/iOS apps (later spec, same API)
 - Direct Instagram/YouTube API publishing & scheduling (needs Meta/Google app review — export+share only)
 - Live payments (build `PaymentsProvider` interface + admin plan override; Razorpay adapter = TODO stub)
 - Team workspaces/roles/approvals; community templates
-- Face _recognition/clustering_ (license-encumbered; face _detection_ for scoring is in)
+- Face *recognition/clustering* (license-encumbered; face *detection* for scoring is in)
 - C2PA signing (leave `// C2PA-HOOK` comment at export finalization)
 - Self-hosted big models of any kind
 
@@ -58,8 +56,7 @@ External: fal.ai (all generative AI) · Resend (OTP email, prod only)
 ```
 
 **Communication rules:**
-
-- Client ↔ web API only (JSON, zod-validated). Client never talks to worker or MinIO directly _except_ presigned upload/download URLs.
+- Client ↔ web API only (JSON, zod-validated). Client never talks to worker or MinIO directly *except* presigned upload/download URLs.
 - Web ↔ worker **only via the `jobs` table** (no HTTP between them). Job progress read by client via polling `GET /api/jobs/:id` every 2 s while active (SSE optional later; do not build WebSockets).
 - One schema owner: **Prisma migrations**. Worker reads the same DB via SQLAlchemy Core against the Prisma-created tables (snake_case mapping below).
 
@@ -94,20 +91,20 @@ reelforge/
 
 ## 3. Fixed Technology Choices (do not relitigate during build)
 
-| Concern          | Choice                                                                                 | Notes                                                                                             |
-| ---------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Web              | Next.js 15 + React + TypeScript strict + Tailwind + shadcn/ui + Zustand + SWR          | PWA manifest + service worker (basic offline shell only)                                          |
-| Auth             | **better-auth** (MIT): email OTP + Google OAuth (env-gated)                            | Dev mode prints OTP to console; prod sends via Resend                                             |
-| ORM              | Prisma (web) · SQLAlchemy Core (worker, read/write, no second migration system)        | snake_case DB names via `@@map`/`@map`                                                            |
-| Queue            | **Postgres jobs table, FOR UPDATE SKIP LOCKED**                                        | No Redis. Heartbeat + stale-reclaim (§5.3)                                                        |
-| Storage          | MinIO (S3 API) — buckets `originals`, `derived`, `renders`, `generated`                | Presigned PUT (multipart ≥64 MB) and GET                                                          |
-| Video processing | FFmpeg 6+ CLI invoked from worker (`worker/lib/ffmpeg.py` builds filtergraphs)         | No MLT in v1 — one engine only                                                                    |
-| Image ops        | sharp (web, instant ops) · Pillow/OpenCV (worker)                                      |                                                                                                   |
-| AI gateway       | **fal.ai** via `GenProvider` interface; `StubProvider` default in dev/CI               | §8. Model slugs live in DB table `gen_models`, seeded; **verify current fal slugs at build time** |
-| Transcription    | faster-whisper `small` int8, CPU, in worker                                            | langs: en, hi                                                                                     |
-| Fonts            | Noto Sans + Noto Sans Devanagari (OFL) bundled in worker image                         | caption burn-in                                                                                   |
-| Tests            | vitest (TS unit) · pytest (worker) · Playwright (e2e) · ffprobe assertions for renders | CI must pass with StubProvider only, zero external calls                                          |
-| Lint/format      | eslint + prettier (TS) · ruff (py)                                                     | pre-commit via husky                                                                              |
+| Concern | Choice | Notes |
+|---|---|---|
+| Web | Next.js 15 + React + TypeScript strict + Tailwind + shadcn/ui + Zustand + SWR | PWA manifest + service worker (basic offline shell only) |
+| Auth | **better-auth** (MIT): email OTP + Google OAuth (env-gated) | Dev mode prints OTP to console; prod sends via Resend |
+| ORM | Prisma (web) · SQLAlchemy Core (worker, read/write, no second migration system) | snake_case DB names via `@@map`/`@map` |
+| Queue | **Postgres jobs table, FOR UPDATE SKIP LOCKED** | No Redis. Heartbeat + stale-reclaim (§5.3) |
+| Storage | MinIO (S3 API) — buckets `originals`, `derived`, `renders`, `generated` | Presigned PUT (multipart ≥64 MB) and GET |
+| Video processing | FFmpeg 6+ CLI invoked from worker (`worker/lib/ffmpeg.py` builds filtergraphs) | No MLT in v1 — one engine only |
+| Image ops | sharp (web, instant ops) · Pillow/OpenCV (worker) | |
+| AI gateway | **fal.ai** via `GenProvider` interface; `StubProvider` default in dev/CI | §8. Model slugs live in DB table `gen_models`, seeded; **verify current fal slugs at build time** |
+| Transcription | faster-whisper `small` int8, CPU, in worker | langs: en, hi |
+| Fonts | Noto Sans + Noto Sans Devanagari (OFL) bundled in worker image | caption burn-in |
+| Tests | vitest (TS unit) · pytest (worker) · Playwright (e2e) · ffprobe assertions for renders | CI must pass with StubProvider only, zero external calls |
+| Lint/format | eslint + prettier (TS) · ruff (py) | pre-commit via husky |
 
 ## 4. Data Model (Prisma — authoritative; all tables snake_case in DB)
 
@@ -245,88 +242,44 @@ model MusicTrack   { id String @id @default(cuid()); title String; storageKey St
 ```jsonc
 {
   "version": 1,
-  "aspect": "9:16",
-  "width": 1080,
-  "height": 1920,
-  "fps": 30,
+  "aspect": "9:16", "width": 1080, "height": 1920, "fps": 30,
   "durationSec": 30.0,
   "tracks": [
-    {
-      "id": "v1",
-      "type": "video",
-      "clips": [
-        {
-          "id": "c1",
-          "assetId": "…",
-          "kind": "video|image",
-          "timelineStart": 0.0,
-          "duration": 2.4, // seconds on timeline
-          "srcIn": 12.2,
-          "srcOut": 14.6, // video trim (ignored for image)
+    { "id": "v1", "type": "video", "clips": [
+        { "id": "c1", "assetId": "…", "kind": "video|image",
+          "timelineStart": 0.0, "duration": 2.4,          // seconds on timeline
+          "srcIn": 12.2, "srcOut": 14.6,                   // video trim (ignored for image)
           "speed": 1.0,
           "transform": { "scale": 1.0, "x": 0, "y": 0, "rotate": 0 }, // 0,0 = centered cover-fit
           "kenBurns": { "fromScale": 1.05, "toScale": 1.18, "panX": 0.03, "panY": 0 }, // images only
-          "transitionAfter": { "type": "cut|fade|slideleft|zoom", "duration": 0.3 },
-        },
-      ],
-    },
-    {
-      "id": "t1",
-      "type": "text",
-      "clips": [
-        {
-          "id": "x1",
-          "text": "Goa 2026",
-          "start": 0.2,
-          "end": 2.2,
-          "styleId": "title-bold",
-          "pos": "center|lower|upper",
-          "animate": "pop|fade|none",
-        },
-      ],
-    },
-    {
-      "id": "a1",
-      "type": "audio",
-      "clips": [
-        {
-          "id": "m1",
-          "assetId": "…",
-          "timelineStart": 0,
-          "srcIn": 8.0,
-          "gainDb": 0,
-          "duckUnderSpeechDb": -10,
-        },
-      ],
-    },
+          "transitionAfter": { "type": "cut|fade|slideleft|zoom", "duration": 0.3 }
+        } ] },
+    { "id": "t1", "type": "text", "clips": [
+        { "id": "x1", "text": "Goa 2026", "start": 0.2, "end": 2.2,
+          "styleId": "title-bold", "pos": "center|lower|upper", "animate": "pop|fade|none" } ] },
+    { "id": "a1", "type": "audio", "clips": [
+        { "id": "m1", "assetId": "…", "timelineStart": 0, "srcIn": 8.0, "gainDb": 0,
+          "duckUnderSpeechDb": -10 } ] }
   ],
-  "captions": {
-    "enabled": true,
-    "styleId": "karaoke-yellow",
-    "lang": "en",
-    "words": [{ "w": "hello", "s": 3.21, "e": 3.44 }],
-  },
+  "captions": { "enabled": true, "styleId": "karaoke-yellow", "lang": "en",
+                "words": [ { "w": "hello", "s": 3.21, "e": 3.44 } ] },
   "color": { "lut": null, "brightness": 0, "contrast": 0, "saturation": 0 },
   "watermark": { "enabled": true },
-  "meta": { "vibeId": "travel-cinematic", "seed": 42, "beatTimes": [0.51, 1.02] },
+  "meta": { "vibeId": "travel-cinematic", "seed": 42, "beatTimes": [0.51, 1.02] }
 }
 ```
-
 Rules: single video track in v1 (overlay track = P2); clips non-overlapping, sorted; renderer and editor must both consume this — **no other representation of an edit exists anywhere.**
 
 ### 5.2 Job payloads (zod in shared, mirrored in worker)
-
 `analyze_media {assetId}` · `detect_events {ownerId}` · `beats {assetId}` · `transcribe {assetId, lang?}` · `autoedit_generate {projectId, assetIds[], vibeId, presetId, targetSec, seed, steering?{pace?,peopleBias?,fewerClips?}}` · `render_preview|render_final {projectId, exportId?}` (preview: 540p/CRF28/veryfast; final: per export) · `generate_ai {generationId}` · `image_op {assetId, op: enhance|bg_remove|erase|upscale, params{maskKey?}}`
 
 ### 5.3 Queue semantics (worker/lib/db.py)
-
 - Claim: `UPDATE jobs SET status='running', locked_by=$w, locked_at=now(), attempts=attempts+1 WHERE id = (SELECT id FROM jobs WHERE status='queued' ORDER BY priority, created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`
 - Heartbeat: update `locked_at` every 30 s from a thread. Reclaim: a sweeper re-queues `running` jobs with `locked_at < now()-'5 min'` and `attempts < 3`, else fails them.
 - Failure: exponential retry (30 s, 2 min) to max 3 attempts → `failed` + human-readable `error`. `generate_ai` failures must refund credits atomically (§8.4).
 - Concurrency: worker runs N=2 job slots (env `WORKER_CONCURRENCY`); render jobs take a dedicated slot.
 
 ### 5.4 API surface (all under /api, session-authenticated, zod-validated; errors as `{error:{code,message}}`)
-
 ```
 POST /media/presign-upload {filename,bytes,kind} → {assetId, uploadUrl|multipart{...}}
 POST /media/:id/complete            → enqueues analyze_media (+beats for audio)
@@ -346,7 +299,6 @@ GET/POST /admin/* (isAdmin)         → flags, gen_models CRUD, jobs dashboard, 
 ## 6. Pipeline Algorithms (worker) — implement exactly, tune constants later
 
 ### 6.1 Media analysis (`analyze_media`)
-
 1. `ffprobe` → dims/duration/fps/codec; EXIF via Pillow (`takenAt`, GPS).
 2. Thumbs: images → 512px JPEG; videos → frames at 10/50/90% (`derived/…/thumb_0.jpg` etc., first = cover). Videos also → 540p H.264 proxy (`-preset veryfast -crf 28 -movflags +faststart`).
 3. Image quality: `blurVar` = variance of Laplacian (OpenCV, grayscale); `exposureScore` = 1 − clipped-histogram fraction (>2% pixels at 0 or 255 penalized). `qualityScore = clamp(0.5*norm(blurVar) + 0.3*exposureScore + 0.2*resolutionScore)`.
@@ -357,19 +309,16 @@ GET/POST /admin/* (isAdmin)         → flags, gen_models CRUD, jobs dashboard, 
 8. Set `ready`; on any step failure set `failed` with reason but keep partial analysis.
 
 ### 6.2 Event clustering (`detect_events`, batch after ≥10 new ready assets or on demand)
-
 Sort by `takenAt`; break when gap > 4 h OR haversine > 25 km; keep clusters ≥ 6 assets; title = `"{Month D–D}"` (+ reverse-geo city if offline lookup lib available — else omit); upsert non-destructively.
 
 ### 6.3 Vibes (seed exactly these 3 in v1; config drives §6.4 + §7)
-
-| id                 | pace (clip sec @ energy low/high) | transitions    | caption style     | kenBurns              | color      |
-| ------------------ | --------------------------------- | -------------- | ----------------- | --------------------- | ---------- |
-| `travel-cinematic` | 2.8 / 1.6                         | fade, zoom     | title-serif-white | slow, alternating pan | +sat, warm |
-| `birthday-fun`     | 1.6 / 0.9                         | cut, slideleft | pop-bold-yellow   | quick zoom-in         | +bright    |
-| `product-promo`    | 2.2 / 1.4                         | cut, fade      | clean-sans-brand  | minimal               | neutral    |
+| id | pace (clip sec @ energy low/high) | transitions | caption style | kenBurns | color |
+|---|---|---|---|---|---|
+| `travel-cinematic` | 2.8 / 1.6 | fade, zoom | title-serif-white | slow, alternating pan | +sat, warm |
+| `birthday-fun` | 1.6 / 0.9 | cut, slideleft | pop-bold-yellow | quick zoom-in | +bright |
+| `product-promo` | 2.2 / 1.4 | cut, fade | clean-sans-brand | minimal | neutral |
 
 ### 6.4 Auto-edit (`autoedit_generate`) — deterministic given (inputs, seed)
-
 1. **Candidates**: ready assets; drop `qualityScore < 0.35`; near-dupes = phash Hamming ≤ 8 → keep best-scored per cluster, cap 3 per burst cluster.
 2. **Music**: user-picked `MusicTrack` else vibe-tagged seed track; `beatTimes` from analysis (librosa `beat_track`; if sparse, synthesize grid from tempo). Energy curve = RMS per beat, normalized.
 3. **Slot plan**: walk beats from 0 to `targetSec`; slot duration = vibe pace interpolated by local energy, snapped to nearest beat multiple (min 0.7 s); last slot ends exactly at `targetSec` (trim/extend ±15%).
@@ -378,14 +327,12 @@ Sort by `takenAt`; break when gap > 4 h OR haversine > 25 km; keep clusters ≥ 
 6. **Decoration**: transitions from vibe (place `zoom/slide` only on downbeat slots, else cut/fade); kenBurns per vibe with direction alternating via seeded RNG; opening title card from event title if present.
 7. Emit edit-spec (§5.1) → save to project → enqueue `render_preview`.
 8. **Shuffle** = same call, new seed + exclusion set (≥40% of prior asset picks must differ — enforce by penalizing reused assets by −0.2).
-   _Unit-test this module hard: same seed ⇒ identical spec; shuffle-difference property; duration exactness; dedupe adjacency property._
+*Unit-test this module hard: same seed ⇒ identical spec; shuffle-difference property; duration exactness; dedupe adjacency property.*
 
 ### 6.5 Beat-sync check (definition of "synced" for tests)
-
 Every video-track cut time must lie within ±80 ms of a beat time (except first/last). Property-tested in pytest on all three vibes.
 
 ### 6.6 Renderer (`render_preview` / `render_final`) — edit-spec → FFmpeg
-
 1. Build per-clip inputs: videos use proxy (preview) or original (final); trim `-ss/-to`, `setpts` for speed; scale-crop cover-fit to canvas; images → `zoompan` over `duration*fps` frames implementing kenBurns; label `[v0][v1]…`.
 2. Transitions: chain `xfade` (`fade`, `slideleft`, `zoompan`-style via `xfade=zoomin`) at computed offsets; `cut` = plain concat boundary. (Build offsets carefully: xfade consumes overlap — recompute cumulative offsets; cover with golden tests.)
 3. Text/captions: generate one `.ass` file — text clips as positioned dialogue events with fade/pop via `\t` tags; captions as karaoke `\k` word timings; styles from `styleId` map (Noto fonts); burn with `subtitles=` filter.
@@ -396,7 +343,6 @@ Every video-track cut time must lie within ±80 ms of a beat time (except first/
 8. Progress: parse ffmpeg `-progress pipe:` → update `job.result.progress` (0–100) every 2 s.
 
 ### 6.7 Image ops (`image_op`)
-
 `enhance` = OpenCV CLAHE (LAB L-channel) + mild saturation + auto white-balance (gray-world), params exposed; `bg_remove` = rembg (isnet-general session) → PNG w/ alpha as new derived asset; `erase` = client sends mask PNG (canvas-drawn) → IOPaint/LaMa CPU; `upscale` = Real-ESRGAN ×2 CPU (cap input 2048px, warn slow). Each op ⇒ **new** derived `MediaAsset` (never overwrite originals), `synthetic` stays false for cleanup ops.
 
 ## 7. Editor UI (apps/web — the hardest frontend piece; build after pipeline works)
@@ -410,7 +356,6 @@ Every video-track cut time must lie within ±80 ms of a beat time (except first/
 ## 8. AI Studio — fal.ai integration (nothing self-hosted)
 
 ### 8.1 Provider abstraction (`worker/lib/fal.py` + TS types in shared)
-
 ```
 GenProvider.submit(kind, modelSlug, params) → {vendorJobId}
 GenProvider.poll(vendorJobId) → {status: queued|running|done|failed, resultUrls?, costUsd?, error?}
@@ -419,21 +364,19 @@ Providers: FalProvider (httpx, fal queue API, poll every 3 s, timeout 10 min),
 ```
 
 ### 8.2 Model routing — seed `gen_models` (slugs are **placeholders — verify against fal.ai catalog at build time**, they churn; admin can edit)
-
-| kind  | tier      | seed slug (verify!)                              | credits | unit        |
-| ----- | --------- | ------------------------------------------------ | ------- | ----------- |
-| t2i   | standard  | `fal-ai/flux/schnell`                            | 2       | image       |
-| t2i   | premium   | `fal-ai/z-image` or current best Apache-licensed | 3       | image       |
-| i2v   | draft     | `fal-ai/wan/v2.2-5b/image-to-video`              | 4       | second      |
-| i2v   | standard  | `fal-ai/kling-video/v3/standard/image-to-video`  | 12      | second      |
-| t2v   | draft     | `fal-ai/wan/v2.2-a14b/text-to-video`             | 4       | second      |
-| t2v   | standard  | `fal-ai/kling-video/v3/standard/text-to-video`   | 12      | second      |
-| t2v   | cinematic | `fal-ai/veo3` (if listed)                        | 45      | second      |
-| tts   | standard  | `fal-ai/kokoro` (en) / current multilingual      | 1       | 100 chars   |
-| music | standard  | current ACE-Step/stable-audio slug               | 5       | track ≤60 s |
+| kind | tier | seed slug (verify!) | credits | unit |
+|---|---|---|---|---|
+| t2i | standard | `fal-ai/flux/schnell` | 2 | image |
+| t2i | premium | `fal-ai/z-image` or current best Apache-licensed | 3 | image |
+| i2v | draft | `fal-ai/wan/v2.2-5b/image-to-video` | 4 | second |
+| i2v | standard | `fal-ai/kling-video/v3/standard/image-to-video` | 12 | second |
+| t2v | draft | `fal-ai/wan/v2.2-a14b/text-to-video` | 4 | second |
+| t2v | standard | `fal-ai/kling-video/v3/standard/text-to-video` | 12 | second |
+| t2v | cinematic | `fal-ai/veo3` (if listed) | 45 | second |
+| tts | standard | `fal-ai/kokoro` (en) / current multilingual | 1 | 100 chars |
+| music | standard | current ACE-Step/stable-audio slug | 5 | track ≤60 s |
 
 ### 8.3 UX flows (studio pages)
-
 - **Text→Image**: prompt + aspect + tier → grid of results → "Save to library".
 - **Image→Video**: pick library image → motion prompt + duration (3–8 s) → result to library.
 - **Text→Video**: prompt + tier + duration (3–8 s); show credit estimate before submit; optional **Best-of-2** toggle (2× credits, both takes shown, user keeps one — this is the v1 stand-in for the QC gate; leave `// QC-HOOK` where a scoring call would slot in).
@@ -441,11 +384,9 @@ Providers: FalProvider (httpx, fal queue API, poll every 3 s, timeout 10 min),
 - Every generated asset: `synthetic=true`, "AI" badge in library, and export flow shows a disclosure reminder line when a project contains synthetic assets (text only, no C2PA in v1).
 
 ### 8.4 Credits (atomic — get this right)
-
 Single DB transaction on submit: `SELECT balance FOR UPDATE` → insufficient ⇒ 402-style error → else insert `CreditLedger(delta=−cost)` + update balance + create `Generation` + `Job`. On terminal failure: compensating ledger entry `refund` in the job's transaction. Ledger is append-only; `balanceAfter` must always reconcile (pytest property: replay ledger = balance).
 
 ### 8.5 Safety minimum (v1)
-
 Prompt pre-filter: fal's own safety + a local blocklist (worker/lib/safety.py: CSAM-adjacent, real-person-nude patterns) → block with clear error; log to `generations.params.safety`. Full moderation stack is out of scope; leave `// MODERATION-HOOK`.
 
 ## 9. Plans, Watermark, Export presets
@@ -456,22 +397,21 @@ Prompt pre-filter: fal's own safety + a local blocklist (worker/lib/safety.py: C
 
 ## 10. Build Phases — execute in order; each phase ends with its tests green in CI
 
-| Phase                       | Deliverable                                                                                                                                                                    | Exit tests (write them in the same phase)                                                                                                                                                                                         |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **P0 Scaffold**             | Monorepo, docker-compose (pg+minio), Prisma schema+migrate, better-auth (OTP console flow + session), app shell + nav, healthz on worker, CI pipeline                          | e2e: signup→OTP→land in Library; unit: editspec zod round-trip                                                                                                                                                                    |
-| **P1 Media library**        | Presigned upload (multipart), analyze pipeline (§6.1), grid + asset drawer (tags, quality), events (§6.2), search by tag/date, `scripts/make_fixtures.sh`                      | e2e: upload 6 synthetic fixtures → all `ready`, thumbs render, event appears; pytest: quality scoring monotonicity, phash dedupe                                                                                                  |
-| **P2 Auto-edit + render**   | Vibes seed, wizard (media/event → vibe → preset → target length), autoedit (§6.4), preview render (§6.6), project player page, Shuffle + steering chips, download              | pytest: determinism/shuffle/beat-sync/duration properties; e2e: event → 20 s reel → player plays; ffprobe: duration/WxH/streams; shuffle ⇒ ≥40% different assets                                                                  |
-| **P3 Editor**               | Timeline UI (§7), all interactions, autosave, preview-render button, re-export                                                                                                 | e2e: trim clip → duration change persisted; add text → appears in re-rendered ffprobe'd output (probe: subtitle burned = frame diff at t vs baseline OR just assert render success + spec applied); unit: undo/redo state machine |
-| **P4 Captions + audio**     | transcribe job + caption editor, caption styles burn-in, music upload + beats, ducking, seed CC0 tracks script                                                                 | pytest: .ass generation snapshot tests (en+hi); e2e: speech fixture → words editable → burned render completes                                                                                                                    |
-| **P5 AI Studio**            | Provider layer + StubProvider + FalProvider, gen_models seed + admin CRUD, credits (§8.4), all 5 studio flows, synthetic badges + disclosure line                              | pytest: ledger atomicity + refund property; e2e (stub): t2i → library; t2v best-of-2 → pick → credits correct; one live fal smoke test behind `RUN_LIVE_AI=1` (never in CI)                                                       |
-| **P6 Image studio**         | enhance / bg-remove / erase (mask canvas) / upscale flows on library images                                                                                                    | e2e: bg-remove fixture → alpha PNG derived asset; pytest: mask plumbing                                                                                                                                                           |
-| **P7 Plans + export + PWA** | Plan flags + gates (watermark, 1080p, credit grants), export presets screen, share/caption box, PWA manifest+SW, admin dashboard (jobs, flags, models, credits)                | e2e: free export has watermark (sample corner pixels differ from content baseline), creator doesn't; preset caps enforced; admin credit adjust reflects in ledger                                                                 |
-| **P8 Hardening**            | Full-suite pass, empty/error states for every async flow, loading skeletons, a11y pass (labels, focus, contrast), README + .env.example + Railway deploy doc, seed demo script | Entire e2e suite green 3× consecutively; then **ultra-review** (see CLAUDE.md) and fix everything it finds before reporting done                                                                                                  |
+| Phase | Deliverable | Exit tests (write them in the same phase) |
+|---|---|---|
+| **P0 Scaffold** | Monorepo, docker-compose (pg+minio), Prisma schema+migrate, better-auth (OTP console flow + session), app shell + nav, healthz on worker, CI pipeline | e2e: signup→OTP→land in Library; unit: editspec zod round-trip |
+| **P1 Media library** | Presigned upload (multipart), analyze pipeline (§6.1), grid + asset drawer (tags, quality), events (§6.2), search by tag/date, `scripts/make_fixtures.sh` | e2e: upload 6 synthetic fixtures → all `ready`, thumbs render, event appears; pytest: quality scoring monotonicity, phash dedupe |
+| **P2 Auto-edit + render** | Vibes seed, wizard (media/event → vibe → preset → target length), autoedit (§6.4), preview render (§6.6), project player page, Shuffle + steering chips, download | pytest: determinism/shuffle/beat-sync/duration properties; e2e: event → 20 s reel → player plays; ffprobe: duration/WxH/streams; shuffle ⇒ ≥40% different assets |
+| **P3 Editor** | Timeline UI (§7), all interactions, autosave, preview-render button, re-export | e2e: trim clip → duration change persisted; add text → appears in re-rendered ffprobe'd output (probe: subtitle burned = frame diff at t vs baseline OR just assert render success + spec applied); unit: undo/redo state machine |
+| **P4 Captions + audio** | transcribe job + caption editor, caption styles burn-in, music upload + beats, ducking, seed CC0 tracks script | pytest: .ass generation snapshot tests (en+hi); e2e: speech fixture → words editable → burned render completes |
+| **P5 AI Studio** | Provider layer + StubProvider + FalProvider, gen_models seed + admin CRUD, credits (§8.4), all 5 studio flows, synthetic badges + disclosure line | pytest: ledger atomicity + refund property; e2e (stub): t2i → library; t2v best-of-2 → pick → credits correct; one live fal smoke test behind `RUN_LIVE_AI=1` (never in CI) |
+| **P6 Image studio** | enhance / bg-remove / erase (mask canvas) / upscale flows on library images | e2e: bg-remove fixture → alpha PNG derived asset; pytest: mask plumbing |
+| **P7 Plans + export + PWA** | Plan flags + gates (watermark, 1080p, credit grants), export presets screen, share/caption box, PWA manifest+SW, admin dashboard (jobs, flags, models, credits) | e2e: free export has watermark (sample corner pixels differ from content baseline), creator doesn't; preset caps enforced; admin credit adjust reflects in ledger |
+| **P8 Hardening** | Full-suite pass, empty/error states for every async flow, loading skeletons, a11y pass (labels, focus, contrast), README + .env.example + Railway deploy doc, seed demo script | Entire e2e suite green 3× consecutively; then **ultra-review** (see CLAUDE.md) and fix everything it finds before reporting done |
 
 ## 11. Configuration & Deployment
 
 ### 11.1 `.env` schema (validate at boot with zod / pydantic; fail fast)
-
 ```
 DATABASE_URL=            # postgres
 S3_ENDPOINT= S3_ACCESS_KEY= S3_SECRET_KEY= S3_REGION=us-east-1
@@ -485,22 +425,17 @@ APP_URL=http://localhost:3000
 ```
 
 ### 11.2 Local dev
-
 `docker compose -f infra/docker-compose.dev.yml up` (postgres, minio+bucket-init, worker with live-reload mount) + `pnpm dev` for web. `pnpm db:migrate`, `pnpm seed` (vibes, presets, gen_models, demo user), `bash scripts/make_fixtures.sh` before e2e.
 
 ### 11.3 Railway (document in README; no IaC needed v1)
-
 Services: **web** (Dockerfile, Next standalone), **worker** (Dockerfile), **Postgres** (Railway plugin; enable pgvector if offered, else JSON fallback path is automatic), **MinIO** (Railway template + volume; or swap S3-compatible endpoint envs later — code must not assume MinIO specifically). Set env per §11.1; worker scales vertically first (CPU-bound ffmpeg); note: renders are CPU-real — set worker to Railway's higher-CPU plan and document expected times (§13).
 
 ## 12. OSS Dependency & License Register (allowlist — extend only with same license classes)
-
 FFmpeg with libx264 (LGPL core + GPL encoder — **acceptable because rendering is server-side only; GPL obligations trigger on distribution, and we never ship this binary to users**; revisit if a desktop app ever embeds it) · sharp (Apache-2.0) · Pillow (HPND) · OpenCV (Apache-2.0) · PySceneDetect (BSD-3) · open_clip (MIT) · imagehash (BSD-2) · MediaPipe (Apache-2.0) · librosa (ISC) · faster-whisper (MIT) · rembg (MIT) · IOPaint/LaMa (Apache-2.0) · Real-ESRGAN (BSD-3) · better-auth (MIT) · Prisma (Apache-2.0) · SQLAlchemy (MIT) · Next.js/React (MIT) · Tailwind (MIT) · shadcn/ui (MIT) · Zustand (MIT) · zod (MIT) · Playwright (Apache-2.0) · vitest (MIT) · pytest (MIT) · MinIO client SDKs (Apache-2.0; MinIO server AGPL — **fine: we run it unmodified as infrastructure, we don't link to it**; note for legal) · Noto fonts (OFL).
-**Banned**: anything CC-BY-NC-weighted, AGPL _libraries_ linked into our code, CodeFormer, InsightFace models, A1111, Essentia.
+**Banned**: anything CC-BY-NC-weighted, AGPL *libraries* linked into our code, CodeFormer, InsightFace models, A1111, Essentia.
 
 ## 13. NFR Targets for this build (CPU-only, honest numbers — assert the generous bounds in e2e)
-
 Upload→analyzed: ≤ 90 s for 6 fixtures · Auto-edit plan: ≤ 10 s · Preview render 20 s @540p: ≤ 120 s · Final 30 s @1080p: ≤ 6 min on 4 vCPU · Editor interactions: ≤ 150 ms perceived; rAF preview ≥ 24 fps with proxies · API p95 ≤ 400 ms (non-job endpoints) · Zero unhandled promise rejections / worker tracebacks in e2e runs.
 
 ## 14. Definition of Done
-
 All P0–P8 exit tests green in CI · `pnpm build` + worker image build clean · fresh-clone → README quickstart → working app in ≤ 15 min · seeded demo flow (fixtures → auto-edit → export with watermark) works on Railway · ultra-review findings fixed or explicitly waived in `REVIEW.md` · no TODOs outside the sanctioned hooks (`QC-HOOK`, `LLM-HOOK`, `MODERATION-HOOK`, `C2PA-HOOK`, Razorpay stub).
