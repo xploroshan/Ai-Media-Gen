@@ -31,11 +31,14 @@ def get_model():
 
 def transcribe_wav(wav_path: Path, lang: str | None = None) -> dict:
     """Returns {lang, words: [{w, s, e}]} (§4 MediaAnalysis.transcript shape)."""
+    # vad_filter off: silero-VAD rejects borderline/synthetic voices outright and
+    # clip audio is short; whisper's own no-speech handling is enough here
     segments, info = get_model().transcribe(
         str(wav_path),
         language=lang,
         word_timestamps=True,
-        vad_filter=True,
+        vad_filter=False,
+        condition_on_previous_text=False,
     )
     words = []
     for segment in segments:

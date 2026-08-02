@@ -37,11 +37,11 @@ ffmpeg -y -v error \
   -c:a libmp3lame -q:a 4 "$OUT/music.mp3"
 
 echo "==> speech fixtures (espeak-ng if available; tone placeholder otherwise)"
-SPEECH_TEXT="hello world welcome to the reel forge caption test today"
+SPEECH_TEXT="Hello everyone. Welcome to our travel video. Today we visit the beach."
 if command -v espeak-ng >/dev/null 2>&1; then
-  espeak-ng -w "$OUT/speech-raw.wav" -s 130 "$SPEECH_TEXT"
+  espeak-ng -v en-us -s 115 -a 190 -g 8 -w "$OUT/speech-raw.wav" "$SPEECH_TEXT"
 elif command -v espeak >/dev/null 2>&1; then
-  espeak -w "$OUT/speech-raw.wav" -s 130 "$SPEECH_TEXT"
+  espeak -v en-us -s 115 -a 190 -g 8 -w "$OUT/speech-raw.wav" "$SPEECH_TEXT"
 else
   ffmpeg -y -v error -f lavfi \
     -i 'aevalsrc=0.4*sin(2*PI*180*t)*(0.5+0.5*sin(2*PI*3*t)):s=16000:d=5' \

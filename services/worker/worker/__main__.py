@@ -80,11 +80,16 @@ def _poller(slot: int, worker_id: str, render_slot: bool) -> None:
 
 
 def _sweeper() -> None:
+    from worker.lib.credits import reconcile_failed_generations
+
     while not _stop.wait(60):
         try:
             n = db.sweep_stale_jobs()
             if n:
                 log.info("sweeper touched %s stale jobs", n)
+            refunded = reconcile_failed_generations()
+            if refunded:
+                log.info("sweeper refunded %s orphaned generations", refunded)
         except Exception:
             log.exception("sweeper error")
 

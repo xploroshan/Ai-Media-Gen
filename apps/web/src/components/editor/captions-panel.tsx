@@ -18,6 +18,7 @@ export function CaptionsPanel({ assets }: { assets: AssetMap }) {
   const nudgeCaptionWord = useEditorStore((s) => s.nudgeCaptionWord);
 
   const [source, setSource] = useState("");
+  const [lang, setLang] = useState<"en" | "hi">("en");
   const [state, setState] = useState<"idle" | "working" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +33,11 @@ export function CaptionsPanel({ assets }: { assets: AssetMap }) {
     setState("working");
     setError(null);
     try {
-      const res = await fetch(`/api/media/${source}/transcribe`, { method: "POST" });
+      const res = await fetch(`/api/media/${source}/transcribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lang }),
+      });
       if (!res.ok) throw new Error(`transcribe request failed (${res.status})`);
       const { jobId } = (await res.json()) as { jobId: string };
       const deadline = Date.now() + 240_000;
@@ -48,11 +53,7 @@ export function CaptionsPanel({ assets }: { assets: AssetMap }) {
       const asset = (await assetRes.json()) as { analysis?: { transcript?: Transcript } };
       const transcript = asset.analysis?.transcript;
       if (!transcript?.words?.length) throw new Error("no speech detected in this clip");
-      setCaptions({
-        enabled: true,
-        lang: transcript.lang === "hi" ? "hi" : "en",
-        words: transcript.words,
-      });
+      setCaptions({ enabled: true, lang, words: transcript.words });
       setState("idle");
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
@@ -90,6 +91,15 @@ export function CaptionsPanel({ assets }: { assets: AssetMap }) {
           ))}
         </select>
         <div className="ml-auto flex items-center gap-2">
+          <select
+            className="h-8 rounded-lg border border-border bg-surface px-2 text-xs"
+            value={lang}
+            onChange={(e) => setLang(e.target.value as "en" | "hi")}
+            aria-label="Speech language"
+          >
+            <option value="en">English</option>
+            <option value="hi">हिन्दी</option>
+          </select>
           <select
             className="h-8 rounded-lg border border-border bg-surface px-2 text-xs"
             value={source}
