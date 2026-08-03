@@ -8,11 +8,13 @@ import { computeCost } from "@/lib/gen-cost";
 import { SAFETY_BLOCK_MESSAGE, isPromptBlocked } from "@/lib/safety";
 import { apiSession } from "@/lib/session";
 import { presignGet } from "@/lib/storage";
+import { withApi } from "@/lib/with-api";
 
 const BodySchema = z.object({
   kind: z.enum(GEN_KINDS),
   tier: z.string().min(1).default("standard"),
   prompt: z.string().min(1).max(2000),
+  bestOf2: z.boolean().optional(), // accepted top-level too; merged into params
   params: z
     .object({
       aspect: z.enum(["square", "portrait", "landscape"]).optional(),
@@ -26,7 +28,7 @@ const BodySchema = z.object({
 });
 
 /** POST /api/generate — credit check → generation + job (SPEC §5.4, §8.4). */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { session, response } = await apiSession();
   if (response) return response;
 
@@ -37,7 +39,11 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { kind, tier, prompt, params } = parsed.data;
+  const { kind, tier, prompt } = parsed.data;
+  const params = {
+    ...parsed.data.params,
+    ...(parsed.data.bestOf2 !== undefined ? { bestOf2: parsed.data.bestOf2 } : {}),
+  };
 
   if (isPromptBlocked(prompt)) {
     return NextResponse.json(apiError("prompt_blocked", SAFETY_BLOCK_MESSAGE), { status: 422 });
@@ -95,3 +101,5 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 }
+
+export const POST = withApi(handlePOST);

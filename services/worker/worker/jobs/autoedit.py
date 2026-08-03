@@ -42,10 +42,14 @@ def _candidates_for(asset_rows: list[dict]) -> list[Candidate]:
     return out
 
 
-def _pick_music(conn, vibe_id: str, music_track_id: str | None) -> dict | None:
+def _pick_music(conn, vibe_id: str, music_track_id: str | None, owner_id: str) -> dict | None:
     if music_track_id:
         row = conn.execute(
-            text("SELECT * FROM music_tracks WHERE id=:id"), {"id": music_track_id}
+            text(
+                "SELECT * FROM music_tracks WHERE id=:id "
+                "AND (owner_id IS NULL OR owner_id=:owner)"
+            ),
+            {"id": music_track_id, "owner": owner_id},
         ).mappings().first()
         if row:
             return dict(row)
@@ -78,13 +82,13 @@ def handle(job: dict) -> dict:
                 "SELECT a.*, an.quality_score, an.tags, an.highlights, an.faces_count, "
                 "an.face_area_ratio FROM media_assets a "
                 "LEFT JOIN media_analysis an ON an.asset_id=a.id "
-                "WHERE a.id = ANY(:ids) AND a.status='ready'"
+                "WHERE a.id = ANY(:ids) AND a.status='ready' AND a.owner_id=:owner"
             ),
-            {"ids": payload["assetIds"]},
+            {"ids": payload["assetIds"], "owner": project["owner_id"]},
         ).mappings().all()
         prior_spec = _load_json(project["edit_spec"]) or {}
         music_track_id = (prior_spec.get("meta") or {}).get("musicTrackId")
-        music = _pick_music(conn, payload["vibeId"], music_track_id)
+        music = _pick_music(conn, payload["vibeId"], music_track_id, project["owner_id"])
         event_title = None
         event_row = conn.execute(
             text(
@@ -101,13 +105,15 @@ def handle(job: dict) -> dict:
         raise RuntimeError("no ready image/video assets among the selection")
 
     beat_times: list[float] = []
-    energy = None
+    energy: list[float] | None = None
     music_duration = None
     if music:
         beat_times = _load_json(music.get("beat_times")) or []
+        energy = _load_json(music.get("energy")) or None
         music_duration = float(music.get("duration_sec") or 0) or None
     if not beat_times:
         beat_times = synth_beat_grid(float(payload["targetSec"]))
+        energy = None  # synthetic grid has no meaningful energy curve
 
     vibe_config = _load_json(vibe["config"])
     spec = plan_autoedit(
@@ -129,11 +135,13 @@ def handle(job: dict) -> dict:
     )
 
     with get_engine().begin() as conn:
-        conn.execute(
+        # the web bumps projects.seed before enqueuing each autoedit; a seed
+        # mismatch means a newer shuffle superseded this run — abort silently
+        count = conn.execute(
             text(
                 "UPDATE projects SET edit_spec=CAST(:spec AS jsonb), vibe_id=:vibe, "
-                "preset_id=:preset, seed=:seed, status='rendering', updated_at=now() "
-                "WHERE id=:id"
+                "preset_id=:preset, status='rendering', updated_at=now() "
+                "WHERE id=:id AND seed=:seed"
             ),
             {
                 "spec": json.dumps(spec),
@@ -142,7 +150,9 @@ def handle(job: dict) -> dict:
                 "seed": int(payload["seed"]),
                 "id": project_id,
             },
-        )
+        ).rowcount
+    if count == 0:
+        return {"projectId": project_id, "superseded": True, "skipped": True}
     render_job = enqueue_job(
         "render_preview", {"projectId": project_id}, owner_id=project["owner_id"], priority=3
     )

@@ -13,17 +13,21 @@ from worker.lib import assets, ffmpeg, s3
 from worker.lib.db import get_engine
 
 
-def compute_beats(local: Path, tmp: Path) -> tuple[list[float], float]:
-    """Returns (beat times, tempo bpm). Synthesizes a tempo grid when sparse (SPEC §6.4.2)."""
+def compute_beats(local: Path, tmp: Path) -> tuple[list[float], float, list[float]]:
+    """Returns (beat times, tempo bpm, per-beat energy 0..1).
+
+    Synthesizes a tempo grid when sparse (SPEC §6.4.2); energy is peak-normalized
+    RMS around each beat and drives the slot planner's pacing (§6.4.3).
+    """
     import librosa
     import numpy as np
 
     wav = ffmpeg.extract_wav(local, tmp / "beat.wav")
     if wav is None:
-        return [], 0.0
+        return [], 0.0, []
     y, sr = librosa.load(str(wav), sr=22050, mono=True)
     if not len(y):
-        return [], 0.0
+        return [], 0.0, []
     duration = len(y) / sr
     tempo, beats = librosa.beat.beat_track(y=y, sr=sr, units="time")
     tempo_f = float(np.atleast_1d(tempo)[0]) if tempo is not None else 0.0
@@ -34,7 +38,19 @@ def compute_beats(local: Path, tmp: Path) -> tuple[list[float], float]:
         start = beat_list[0] if beat_list else 0.0
         n_beats = int((duration - start) / interval) + 1
         beat_list = [round(start + i * interval, 3) for i in range(n_beats)]
-    return beat_list, tempo_f
+
+    energy: list[float] = []
+    if beat_list:
+        hop = 512
+        rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop)
+        for b in beat_list:
+            idx = int(np.searchsorted(times, b))
+            lo, hi = max(0, idx - 2), min(len(rms), idx + 3)
+            energy.append(float(np.mean(rms[lo:hi])) if hi > lo else 0.0)
+        peak = max(energy)
+        energy = [round(e / peak, 3) for e in energy] if peak > 0 else [0.5] * len(energy)
+    return beat_list, tempo_f, energy
 
 
 @register("beats")
@@ -47,7 +63,7 @@ def handle(job: dict) -> dict:
         if asset is not None:
             local = s3.download_to_tmp(asset["storage_key"])
             try:
-                beat_times, tempo = compute_beats(local, tmp)
+                beat_times, tempo, _energy = compute_beats(local, tmp)
             finally:
                 local.unlink(missing_ok=True)
             assets.upsert_analysis(asset_id, beat_times=beat_times)
@@ -67,12 +83,15 @@ def handle(job: dict) -> dict:
             raise RuntimeError(f"no media asset or music track {asset_id}")
         local = s3.download_to_tmp(row["storage_key"])
         try:
-            beat_times, tempo = compute_beats(local, tmp)
+            beat_times, tempo, energy = compute_beats(local, tmp)
         finally:
             local.unlink(missing_ok=True)
         with get_engine().begin() as conn:
             conn.execute(
-                text("UPDATE music_tracks SET beat_times=CAST(:b AS jsonb) WHERE id=:id"),
-                {"b": json.dumps(beat_times), "id": row["id"]},
+                text(
+                    "UPDATE music_tracks SET beat_times=CAST(:b AS jsonb), "
+                    "energy=CAST(:e AS jsonb) WHERE id=:id"
+                ),
+                {"b": json.dumps(beat_times), "e": json.dumps(energy), "id": row["id"]},
             )
         return {"musicTrackId": row["id"], "beats": len(beat_times), "tempo": tempo}

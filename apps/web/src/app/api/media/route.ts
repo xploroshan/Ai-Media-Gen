@@ -3,11 +3,12 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { apiSession } from "@/lib/session";
 import { presignGet } from "@/lib/storage";
+import { withApi } from "@/lib/with-api";
 
 const PAGE_SIZE = 60;
 
 /** GET /api/media?query=&eventId=&kind=&from=&to=&page= — library grid (SPEC §5.4). */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const { session, response } = await apiSession();
   if (response) return response;
 
@@ -68,3 +69,5 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ items, total, page, pageSize: PAGE_SIZE });
 }
+
+export const GET = withApi(handleGET);

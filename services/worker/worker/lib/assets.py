@@ -95,7 +95,8 @@ def upsert_event(
             conn.execute(
                 text(
                     "SELECT id FROM events WHERE owner_id=:o "
-                    "AND start_at <= :e AND end_at >= :s LIMIT 1"
+                    "AND start_at <= :e AND end_at >= :s "
+                    "ORDER BY start_at, id LIMIT 1"
                 ),
                 {"o": owner_id, "s": start_at, "e": end_at},
             )
@@ -128,6 +129,14 @@ def upsert_event(
             event_id = row[0]
         conn.execute(
             text("UPDATE media_assets SET event_id=:ev WHERE id = ANY(:ids)"),
+            {"ev": event_id, "ids": asset_ids},
+        )
+        # re-clustering can shrink an event — detach members that dropped out
+        conn.execute(
+            text(
+                "UPDATE media_assets SET event_id=NULL "
+                "WHERE event_id=:ev AND NOT (id = ANY(:ids))"
+            ),
             {"ev": event_id, "ids": asset_ids},
         )
     return event_id

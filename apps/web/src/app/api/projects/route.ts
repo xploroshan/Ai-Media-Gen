@@ -4,6 +4,7 @@ import { apiError, emptyEditSpec, type EditSpec } from "@reelforge/shared";
 import { prisma } from "@/lib/db";
 import { enqueueJob } from "@/lib/jobs";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 const BodySchema = z
   .object({
@@ -19,7 +20,7 @@ const BodySchema = z
   });
 
 /** POST /api/projects — create project + autoedit job (SPEC §5.4). */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { session, response } = await apiSession();
   if (response) return response;
 
@@ -53,10 +54,20 @@ export async function POST(req: NextRequest) {
     title ??= event.title;
   }
 
-  const owned = await prisma.mediaAsset.count({
+  // only assets the caller owns AND that are ready may enter the job payload
+  const ownedReady = await prisma.mediaAsset.findMany({
     where: { id: { in: assetIds }, ownerId: session.user.id, status: "ready" },
+    select: { id: true },
   });
-  if (owned === 0) {
+  const ownedIds = new Set(ownedReady.map((a) => a.id));
+  if (!body.eventId && assetIds.some((assetId) => !ownedIds.has(assetId))) {
+    return NextResponse.json(
+      apiError("forbidden_asset", "Selection references media you don't own or that isn't ready"),
+      { status: 403 },
+    );
+  }
+  assetIds = assetIds.filter((assetId) => ownedIds.has(assetId));
+  if (assetIds.length === 0) {
     return NextResponse.json(apiError("bad_request", "No ready assets selected"), { status: 400 });
   }
 
@@ -106,7 +117,7 @@ export async function POST(req: NextRequest) {
 }
 
 /** GET /api/projects — list own projects. */
-export async function GET() {
+async function handleGET() {
   const { session, response } = await apiSession();
   if (response) return response;
   const projects = await prisma.project.findMany({
@@ -124,3 +135,6 @@ export async function GET() {
   });
   return NextResponse.json({ items: projects });
 }
+
+export const GET = withApi(handleGET);
+export const POST = withApi(handlePOST);

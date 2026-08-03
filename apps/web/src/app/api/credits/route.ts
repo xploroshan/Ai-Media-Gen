@@ -3,9 +3,10 @@ import { PLAN_LIMITS, type Plan } from "@reelforge/shared";
 import { maybeMonthlyGrant } from "@/lib/credits";
 import { prisma } from "@/lib/db";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/credits — balance + recent ledger. Applies the lazy monthly grant (§9). */
-export async function GET() {
+async function handleGET() {
   const { session, response } = await apiSession();
   if (response) return response;
 
@@ -35,3 +36,5 @@ export async function GET() {
     })),
   });
 }
+
+export const GET = withApi(handleGET);

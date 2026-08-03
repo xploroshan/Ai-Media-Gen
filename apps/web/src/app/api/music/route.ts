@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/music — library seed tracks + the user's own audio uploads. */
-export async function GET() {
+async function handleGET() {
   const { session, response } = await apiSession();
   if (response) return response;
   const [seedTracks, ownAudio] = await Promise.all([
@@ -31,3 +32,5 @@ export async function GET() {
     })),
   });
 }
+
+export const GET = withApi(handleGET);

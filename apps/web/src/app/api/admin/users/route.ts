@@ -4,9 +4,10 @@ import { PLANS, apiError } from "@reelforge/shared";
 import { adminAdjustCredits } from "@/lib/credits";
 import { prisma } from "@/lib/db";
 import { apiAdmin } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/admin/users?query= — find users for plan/credit management. */
-export async function GET(req: NextRequest) {
+async function handleGET(req: NextRequest) {
   const { response } = await apiAdmin();
   if (response) return response;
   const query = req.nextUrl.searchParams.get("query")?.trim() ?? "";
@@ -37,7 +38,7 @@ const BodySchema = z.object({
 });
 
 /** POST /api/admin/users — set plan and/or adjust credits (ledgered, SPEC §9). */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { session, response } = await apiAdmin();
   if (response) return response;
   const parsed = BodySchema.safeParse(await req.json().catch(() => null));
@@ -60,3 +61,6 @@ export async function POST(req: NextRequest) {
   }
   return NextResponse.json({ ok: true, plan: plan ?? profile.plan, creditsBalance: balance });
 }
+
+export const GET = withApi(handleGET);
+export const POST = withApi(handlePOST);

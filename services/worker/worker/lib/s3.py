@@ -39,7 +39,11 @@ def download_to_tmp(storage_key: str, suffix: str = "") -> Path:
         suffix=suffix or Path(key).suffix, delete=False
     ) as fd:
         name = fd.name
-    client().download_file(bucket, key, name)
+    try:
+        client().download_file(bucket, key, name)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
     return Path(name)
 
 

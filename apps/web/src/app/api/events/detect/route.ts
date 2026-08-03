@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { enqueueJob } from "@/lib/jobs";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** POST /api/events/detect — on-demand clustering (SPEC §6.2 "or on demand"). */
-export async function POST() {
+async function handlePOST() {
   const { session, response } = await apiSession();
   if (response) return response;
 
@@ -24,3 +25,5 @@ export async function POST() {
   );
   return NextResponse.json({ jobId });
 }
+
+export const POST = withApi(handlePOST);

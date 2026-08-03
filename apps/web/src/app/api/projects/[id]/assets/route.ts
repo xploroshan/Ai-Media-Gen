@@ -3,9 +3,10 @@ import { apiError, type EditSpec } from "@reelforge/shared";
 import { prisma } from "@/lib/db";
 import { apiSession } from "@/lib/session";
 import { presignGet } from "@/lib/storage";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/projects/:id/assets — media URLs for every asset referenced by the edit-spec. */
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { session, response } = await apiSession();
   if (response) return response;
   const { id } = await params;
@@ -25,7 +26,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     where: { id: { in: [...assetIds] }, ownerId: session.user.id },
   });
   const musicTracks = await prisma.musicTrack.findMany({
-    where: { id: { in: [...assetIds] } },
+    where: {
+      id: { in: [...assetIds] },
+      OR: [{ ownerId: null }, { ownerId: session.user.id }],
+    },
   });
 
   const out: Record<
@@ -50,3 +54,5 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
   return NextResponse.json({ assets: out });
 }
+
+export const GET = withApi(handleGET);

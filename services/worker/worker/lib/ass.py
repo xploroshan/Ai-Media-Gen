@@ -116,10 +116,17 @@ def build_ass(
             groups.append(group)
         for grp in groups:
             start, end = grp[0]["s"], grp[-1]["e"]
+            # \k durations are consecutive from the line start, so inter-word
+            # silence needs an empty {\k gap} filler or highlighting drifts early
             parts = []
+            cursor = start
             for word in grp:
+                gap_cs = int(round((word["s"] - cursor) * 100))
+                if gap_cs > 0:
+                    parts.append(f"{{\\k{gap_cs}}}")
                 dur_cs = max(1, int(round((word["e"] - word["s"]) * 100)))
                 parts.append(f"{{\\k{dur_cs}}}{_escape(word['w'])}")
+                cursor = word["e"]
             lines.append(
                 f"Dialogue: 0,{_ts(start)},{_ts(end)},{caption_style},,0,0,0,,"
                 f"{{\\an2}}{' '.join(parts)}"

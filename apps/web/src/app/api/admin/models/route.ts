@@ -3,9 +3,10 @@ import { z } from "zod";
 import { apiError } from "@reelforge/shared";
 import { prisma } from "@/lib/db";
 import { apiAdmin } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/admin/models — full routing table incl. slugs (admin only, SPEC §8.2). */
-export async function GET() {
+async function handleGET() {
   const { response } = await apiAdmin();
   if (response) return response;
   const models = await prisma.genModel.findMany({ orderBy: [{ kind: "asc" }, { tier: "asc" }] });
@@ -24,7 +25,7 @@ const UpsertSchema = z.object({
 });
 
 /** POST /api/admin/models — create/update a routing row (slug edits live here, never in code). */
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { response } = await apiAdmin();
   if (response) return response;
   const parsed = UpsertSchema.safeParse(await req.json().catch(() => null));
@@ -44,3 +45,6 @@ export async function POST(req: NextRequest) {
       });
   return NextResponse.json({ model });
 }
+
+export const GET = withApi(handleGET);
+export const POST = withApi(handlePOST);

@@ -4,11 +4,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { enqueueJob } from "@/lib/jobs";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 const BodySchema = z.object({ steering: SteeringSchema.optional() }).default({});
 
 /** POST /api/projects/:id/shuffle — new seed + autoedit job with exclusion set (§6.4.8). */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { session, response } = await apiSession();
   if (response) return response;
   const { id } = await params;
@@ -18,6 +19,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   if (!project.vibeId || !project.presetId) {
     return NextResponse.json(apiError("conflict", "Project has no auto-edit yet"), { status: 409 });
+  }
+
+  // one autoedit at a time per project — a second shuffle mid-plan would race it
+  const activeAutoedit = await prisma.job.findFirst({
+    where: {
+      type: "autoedit_generate",
+      status: { in: ["queued", "running"] },
+      payload: { path: ["projectId"], equals: id },
+    },
+    select: { id: true },
+  });
+  if (activeAutoedit) {
+    return NextResponse.json(apiError("autoedit_in_progress", "A shuffle is already running"), {
+      status: 409,
+    });
   }
 
   const body = BodySchema.parse(await req.json().catch(() => ({})));
@@ -60,3 +76,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   );
   return NextResponse.json({ jobId, seed });
 }
+
+export const POST = withApi(handlePOST);

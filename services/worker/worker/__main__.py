@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from worker.jobs import HANDLERS, RENDER_TYPES, load_all
 from worker.lib import db
+from worker.lib.payloads import validate_payload
 from worker.lib.settings import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -38,7 +39,10 @@ def _run_job(job: dict, worker_id: str) -> None:
     def hb() -> None:
         while not hb_stop.wait(30):
             try:
-                db.heartbeat(job_id)
+                if not db.heartbeat(job_id, worker_id):
+                    # lease lost (sweeper reclaimed the job) — stop renewing
+                    log.warning("job %s lease lost; heartbeat stopping", job_id)
+                    return
             except Exception:  # pragma: no cover - best effort
                 log.exception("heartbeat failed for %s", job_id)
 
@@ -47,30 +51,34 @@ def _run_job(job: dict, worker_id: str) -> None:
     try:
         if handler is None:
             raise RuntimeError(f"no handler for job type {job['type']!r}")
-        payload = job.get("payload") or {}
+        payload = validate_payload(job["type"], job.get("payload") or {})
         log.info("job %s (%s) start attempt=%s", job_id, job["type"], job["attempts"])
-        result = handler({**job, "payload": payload})
-        db.complete_job(job_id, result)
-        log.info("job %s done", job_id)
+        result = handler({**job, "payload": payload, "workerId": worker_id})
+        if db.complete_job(job_id, worker_id, result):
+            log.info("job %s done", job_id)
+        else:
+            log.warning("job %s finished but the lease was lost — result discarded", job_id)
     except Exception as exc:
         log.error("job %s failed: %s\n%s", job_id, exc, traceback.format_exc())
-        status = db.fail_job(job_id, f"{type(exc).__name__}: {exc}", job["attempts"])
+        status = db.fail_job(job_id, worker_id, f"{type(exc).__name__}: {exc}", job["attempts"])
         log.info("job %s -> %s", job_id, status)
     finally:
         hb_stop.set()
 
 
 def _poller(slot: int, worker_id: str, render_slot: bool) -> None:
-    """Each slot polls for work. One dedicated slot prefers (and reserves) renders."""
+    """Render slot polls ONLY render jobs (dedicated, §5.3); others exclude them."""
     while not _stop.is_set():
         try:
-            job = None
             if render_slot:
-                job = db.claim_job(worker_id, types=sorted(RENDER_TYPES))
-            if job is None:
-                types = None if render_slot else sorted(set(HANDLERS) - RENDER_TYPES) or None
-                if not render_slot or HANDLERS:
-                    job = db.claim_job(worker_id, types=types)
+                types: list[str] | None = sorted(RENDER_TYPES)
+            else:
+                non_render = sorted(set(HANDLERS) - RENDER_TYPES)
+                if not non_render:
+                    _stop.wait(1.0)
+                    continue
+                types = non_render
+            job = db.claim_job(worker_id, types=types)
             if job:
                 _run_job(job, worker_id)
                 continue
@@ -81,6 +89,7 @@ def _poller(slot: int, worker_id: str, render_slot: bool) -> None:
 
 def _sweeper() -> None:
     from worker.lib.credits import reconcile_failed_generations
+    from worker.lib.reconcile import reconcile_stuck_entities
 
     while not _stop.wait(60):
         try:
@@ -90,6 +99,9 @@ def _sweeper() -> None:
             refunded = reconcile_failed_generations()
             if refunded:
                 log.info("sweeper refunded %s orphaned generations", refunded)
+            fixed = reconcile_stuck_entities()
+            if fixed:
+                log.info("sweeper reconciled %s stuck entities", fixed)
         except Exception:
             log.exception("sweeper error")
 
@@ -114,14 +126,28 @@ def main() -> None:
     for t in threads:
         t.start()
 
+    # uvicorn must not own the signals (it would swallow our graceful shutdown)
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="0.0.0.0", port=8001, log_level="warning")
+    )
+    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+
     def _shutdown(*_: object) -> None:
-        log.info("shutting down")
+        log.info("shutting down: draining pollers")
         _stop.set()
+        server.should_exit = True
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)
 
-    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="warning")
+    server.run()
+
+    # give in-flight jobs a moment, then hand back anything still running
+    for t in threads:
+        t.join(timeout=10)
+    requeued = db.requeue_own_running(worker_id)
+    if requeued:
+        log.info("requeued %s in-flight jobs on shutdown", requeued)
 
 
 if __name__ == "__main__":

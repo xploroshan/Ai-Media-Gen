@@ -141,7 +141,16 @@ export function updateClip(
   const next = clone(spec);
   const clip = videoTrack(next).clips.find((c) => c.id === clipId);
   if (!clip) return spec;
+  const prevSpeed = clip.speed || 1;
   Object.assign(clip, patch);
+  if (clip.kind === "video" && patch.speed !== undefined) {
+    // same source span plays at the new speed, so the timeline duration moves
+    const srcIn = clip.srcIn ?? 0;
+    const srcOut = clip.srcOut ?? srcIn + clip.duration * prevSpeed;
+    clip.srcOut = srcOut;
+    const duration = (srcOut - srcIn) / (clip.speed || 1);
+    clip.duration = Math.max(MIN_CLIP_SEC, Math.round(duration * 1000) / 1000);
+  }
   return normalizeTimeline(next);
 }
 

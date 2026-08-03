@@ -1,4 +1,5 @@
 import {
+  AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   GetObjectCommand,
@@ -88,6 +89,11 @@ export async function completeMultipart(
       MultipartUpload: { Parts: parts },
     }),
   );
+}
+
+export async function abortMultipart(storageKey: string, uploadId: string): Promise<void> {
+  const { bucket, key } = splitStorageKey(storageKey);
+  await s3.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId: uploadId }));
 }
 
 export async function objectExists(storageKey: string): Promise<boolean> {

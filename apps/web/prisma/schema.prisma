@@ -182,6 +182,7 @@ model Job {
   finishedAt DateTime? @map("finished_at")
 
   @@index([status, priority, createdAt])
+  @@index([finishedAt])
   @@map("jobs")
 }
 
@@ -196,7 +197,7 @@ model Generation {
   creditCost    Int      @map("credit_cost")
   status        String   @default("queued") // queued|running|done|failed|refunded
   resultAssetId String?  @map("result_asset_id")
-  vendorCostUsd Float?   @map("vendor_cost_usd")
+  vendorCostUsd Decimal? @map("vendor_cost_usd") @db.Decimal(10, 4)
   jobId         String?  @map("job_id")
   createdAt     DateTime @default(now()) @map("created_at")
 
@@ -206,14 +207,16 @@ model Generation {
 
 model CreditLedger {
   id           String   @id @default(cuid())
+  seq          BigInt   @unique @default(autoincrement()) // total order for replay
   ownerId      String   @map("owner_id")
   delta        Int // negative = spend
-  reason       String // generation|refund|signup_bonus|admin_adjust|monthly_grant
+  reason       String // generation|refund|partial_refund|signup_bonus|admin_adjust|monthly_grant
   refId        String?  @map("ref_id") // generation id etc.
   balanceAfter Int      @map("balance_after")
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([ownerId, createdAt])
+  @@index([refId])
   @@map("credit_ledger")
 }
 
@@ -280,6 +283,7 @@ model MusicTrack {
   storageKey  String  @map("storage_key")
   durationSec Float   @map("duration_sec")
   beatTimes   Json?   @map("beat_times")
+  energy      Json? // per-beat RMS 0..1, aligned with beatTimes (§6.4.3)
   license     String
   attribution String?
   ownerId     String? @map("owner_id") // null = seeded library track

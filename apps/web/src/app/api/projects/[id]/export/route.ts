@@ -4,6 +4,7 @@ import { PLAN_LIMITS, RESOLUTIONS, apiError, type EditSpec, type Plan } from "@r
 import { prisma } from "@/lib/db";
 import { enqueueJob } from "@/lib/jobs";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 const BodySchema = z.object({
   presetId: z.string().min(1),
@@ -11,7 +12,7 @@ const BodySchema = z.object({
 });
 
 /** POST /api/projects/:id/export — plan-gated export + render_final (SPEC §5.4, §9). */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { session, response } = await apiSession();
   if (response) return response;
   const { id } = await params;
@@ -63,9 +64,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       status: "queued",
     },
   });
+  // snapshot the spec the user approved: edits made while the final renders
+  // must not leak into this export (worker renders the snapshot, not live state)
   const jobId = await enqueueJob(
     "render_final",
-    { projectId: id, exportId: exportRow.id },
+    { projectId: id, exportId: exportRow.id, editSpecSnapshot: spec as object },
     { ownerId: session.user.id, priority: 3 },
   );
 
@@ -83,3 +86,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     containsSynthetic: syntheticCount > 0,
   });
 }
+
+export const POST = withApi(handlePOST);

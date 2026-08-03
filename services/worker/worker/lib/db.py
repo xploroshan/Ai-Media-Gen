@@ -60,60 +60,92 @@ def claim_job(worker_id: str, types: list[str] | None = None) -> dict[str, Any] 
     return dict(row) if row else None
 
 
-def heartbeat(job_id: str) -> None:
+def heartbeat(job_id: str, worker_id: str) -> bool:
+    """Renew the lease. Returns False when the lease was lost (job reclaimed)."""
     with get_engine().begin() as conn:
-        conn.execute(
-            text("UPDATE jobs SET locked_at=now() WHERE id=:id AND status='running'"),
-            {"id": job_id},
-        )
+        count = conn.execute(
+            text(
+                "UPDATE jobs SET locked_at=now() "
+                "WHERE id=:id AND status='running' AND locked_by=:w"
+            ),
+            {"id": job_id, "w": worker_id},
+        ).rowcount
+    return count > 0
 
 
-def complete_job(job_id: str, result: dict[str, Any] | None = None) -> None:
+def complete_job(job_id: str, worker_id: str, result: dict[str, Any] | None = None) -> bool:
+    """Terminal success — only valid while this worker still holds the lease.
+
+    Returns False when the job was reclaimed (sweeper/another worker owns it now);
+    callers must treat that as 'my run no longer counts'.
+    """
     with get_engine().begin() as conn:
-        conn.execute(
+        count = conn.execute(
             text(
                 "UPDATE jobs SET status='done', result=CAST(:result AS jsonb), error=NULL, "
-                "finished_at=now(), locked_by=NULL, locked_at=NULL WHERE id=:id"
+                "finished_at=now(), locked_by=NULL, locked_at=NULL "
+                "WHERE id=:id AND status='running' AND locked_by=:w"
             ),
-            {"id": job_id, "result": json.dumps(result or {})},
-        )
+            {"id": job_id, "result": json.dumps(result or {}), "w": worker_id},
+        ).rowcount
+    return count > 0
 
 
-def update_progress(job_id: str, progress: int, extra: dict[str, Any] | None = None) -> None:
+def update_progress(
+    job_id: str, worker_id: str, progress: int, extra: dict[str, Any] | None = None
+) -> None:
     payload = {"progress": max(0, min(100, progress)), **(extra or {})}
     with get_engine().begin() as conn:
         conn.execute(
             text(
                 "UPDATE jobs SET result = COALESCE(result,'{}'::jsonb) || CAST(:p AS jsonb) "
-                "WHERE id=:id AND status='running'"
+                "WHERE id=:id AND status='running' AND locked_by=:w"
             ),
-            {"id": job_id, "p": json.dumps(payload)},
+            {"id": job_id, "p": json.dumps(payload), "w": worker_id},
         )
 
 
-def fail_job(job_id: str, error: str, attempts: int) -> str:
-    """Fail or schedule retry. Returns final status ('queued' retry or 'failed')."""
+def fail_job(job_id: str, worker_id: str, error: str, attempts: int) -> str:
+    """Fail or schedule retry — lease-guarded like complete_job.
+
+    Returns 'queued' (retry scheduled), 'failed' (terminal), or 'lost' (job was
+    reclaimed while we ran; our failure no longer counts).
+    """
     if attempts < MAX_ATTEMPTS:
         delay = RETRY_DELAYS_SEC[min(attempts - 1, len(RETRY_DELAYS_SEC) - 1)]
         with get_engine().begin() as conn:
-            conn.execute(
+            count = conn.execute(
                 text(
                     "UPDATE jobs SET status='queued', error=:error, locked_by=NULL, "
                     "locked_at=NULL, run_after=now() + make_interval(secs => :delay) "
-                    "WHERE id=:id"
+                    "WHERE id=:id AND status='running' AND locked_by=:w"
                 ),
-                {"id": job_id, "error": error[:2000], "delay": delay},
-            )
-        return "queued"
+                {"id": job_id, "error": error[:2000], "delay": delay, "w": worker_id},
+            ).rowcount
+        return "queued" if count else "lost"
     with get_engine().begin() as conn:
-        conn.execute(
+        count = conn.execute(
             text(
                 "UPDATE jobs SET status='failed', error=:error, finished_at=now(), "
-                "locked_by=NULL, locked_at=NULL WHERE id=:id"
+                "locked_by=NULL, locked_at=NULL "
+                "WHERE id=:id AND status='running' AND locked_by=:w"
             ),
-            {"id": job_id, "error": error[:2000]},
-        )
-    return "failed"
+            {"id": job_id, "error": error[:2000], "w": worker_id},
+        ).rowcount
+    return "failed" if count else "lost"
+
+
+def requeue_own_running(worker_id: str) -> int:
+    """Graceful-shutdown helper: hand back this worker's in-flight jobs."""
+    with get_engine().begin() as conn:
+        return conn.execute(
+            text(
+                "UPDATE jobs SET status='queued', locked_by=NULL, locked_at=NULL, "
+                "attempts=GREATEST(attempts-1, 0) "
+                "WHERE locked_by=:w AND status='running'"
+            ),
+            {"w": worker_id},
+        ).rowcount
 
 
 def sweep_stale_jobs() -> int:

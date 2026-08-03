@@ -55,14 +55,23 @@ export function ExportDialog({
       }
       const { exportId } = (await res.json()) as { exportId: string };
       const deadline = Date.now() + 600_000;
+      let misses = 0; // a transient poll blip must not kill a 10-minute render
       for (;;) {
-        const stateRes = await fetch(`/api/exports/${exportId}`);
-        const state = (await stateRes.json()) as ExportState;
-        if (state.status === "done") {
+        let state: ExportState | null = null;
+        try {
+          const stateRes = await fetch(`/api/exports/${exportId}`);
+          if (!stateRes.ok) throw new Error(`poll ${stateRes.status}`);
+          state = (await stateRes.json()) as ExportState;
+          misses = 0;
+        } catch {
+          misses += 1;
+          if (misses >= 5) throw new Error("Lost connection while exporting.");
+        }
+        if (state?.status === "done") {
           setExportState(state);
           break;
         }
-        if (state.status === "failed") throw new Error("Render failed — try again.");
+        if (state?.status === "failed") throw new Error("Render failed — try again.");
         if (Date.now() > deadline) throw new Error("Export timed out.");
         await new Promise((r) => setTimeout(r, 3000));
       }

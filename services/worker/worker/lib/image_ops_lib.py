@@ -1,12 +1,29 @@
-"""Image studio operations — SPEC §6.7. Pure functions over arrays/paths."""
+"""Image studio operations — SPEC §6.7. Pure functions over arrays/paths.
+
+Heavy models (rembg session, LaMa, Real-ESRGAN) are process-lifetime singletons
+behind a lock: loading them per job dominated op latency and they are
+thread-safe for inference given the queue's one-job-per-slot model.
+"""
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 UPSCALE_MAX_INPUT_PX = 2048  # cap input (SPEC §6.7: warn slow)
+
+_model_lock = threading.Lock()
+_models: dict[str, Any] = {}
+
+
+def _cached_model(key: str, factory):
+    with _model_lock:
+        if key not in _models:
+            _models[key] = factory()
+        return _models[key]
 
 
 def enhance(bgr: np.ndarray, clahe_clip: float = 2.0, saturation: float = 1.12) -> np.ndarray:
@@ -58,7 +75,7 @@ def bg_remove(image_path: Path, out_png: Path) -> Path:
     """rembg isnet-general -> RGBA PNG (SPEC §6.7)."""
     from rembg import new_session, remove
 
-    session = new_session("isnet-general-use")
+    session = _cached_model("rembg", lambda: new_session("isnet-general-use"))
     data = image_path.read_bytes()
     result = remove(data, session=session)
     out_png.write_bytes(result)
@@ -76,7 +93,8 @@ def erase(image_path: Path, mask_path: Path, out_path: Path) -> Path:
     if raw_mask is None:
         raise RuntimeError("unreadable mask")
     mask = prepare_mask(raw_mask, (img.height, img.width))
-    result = SimpleLama()(img, Image.fromarray(mask))
+    lama = _cached_model("lama", SimpleLama)
+    result = lama(img, Image.fromarray(mask))
     result.save(out_path)
     return out_path
 
@@ -95,12 +113,15 @@ def upscale(image_path: Path, out_path: Path, model_path: Path) -> Path:
         scale = UPSCALE_MAX_INPUT_PX / max(h, w)
         img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23,
-                    num_grow_ch=32, scale=2)
-    upsampler = RealESRGANer(
-        scale=2, model_path=str(model_path), model=model, tile=512, tile_pad=10,
-        pre_pad=0, half=False, device="cpu",
-    )
+    def _build() -> RealESRGANer:
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23,
+                        num_grow_ch=32, scale=2)
+        return RealESRGANer(
+            scale=2, model_path=str(model_path), model=model, tile=512, tile_pad=10,
+            pre_pad=0, half=False, device="cpu",
+        )
+
+    upsampler = _cached_model("realesrgan", _build)
     output, _ = upsampler.enhance(img, outscale=2)
     cv2.imwrite(str(out_path), output)
     return out_path

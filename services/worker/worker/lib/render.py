@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import math
 import subprocess
+import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 OUTRO_SEC = 1.5  # appended branding card when watermark is on (§6.6.5)
+RENDER_TIMEOUT_SEC = 1800  # hard cap; NFR §13 renders finish well inside this
 XFADE_NAME = {"fade": "fade", "slideleft": "slideleft", "zoom": "zoomin"}
 
 
@@ -53,7 +56,13 @@ def transition_of(clip: dict) -> tuple[str, float]:
 
 
 def compute_clip_extensions(clips: list[dict], sources: dict[str, dict]) -> list[ClipPlan]:
-    """Per-clip extension/pad for xfade overlap consumption. sources: assetId->{path,duration}."""
+    """Per-clip extension/pad for xfade overlap consumption. sources: assetId->{path,duration}.
+
+    pad covers EVERY source-material shortfall — a transition tail past srcOut
+    and a main body longer than the remaining source alike — by cloning the last
+    frame, so the chain always emits exactly duration+ext seconds and the xfade
+    offset math stays valid.
+    """
     plans: list[ClipPlan] = []
     for i, clip in enumerate(clips):
         src = sources[clip["assetId"]]
@@ -62,12 +71,13 @@ def compute_clip_extensions(clips: list[dict], sources: dict[str, dict]) -> list
             t_type, t_dur = transition_of(clip)
             if t_type != "cut":
                 plan.ext = t_dur
-                if clip["kind"] == "video":
-                    speed = float(clip.get("speed", 1.0)) or 1.0
-                    src_out = float(clip.get("srcOut", 0.0))
-                    src_dur = float(src.get("duration") or src_out)
-                    material = max(0.0, (src_dur - src_out) / speed)
-                    plan.pad = max(0.0, t_dur - material)
+        if clip["kind"] == "video":
+            speed = float(clip.get("speed", 1.0)) or 1.0
+            src_in = float(clip.get("srcIn") or 0.0)
+            src_dur = float(src.get("duration") or clip.get("srcOut") or 0.0)
+            needed = float(clip["duration"]) + plan.ext  # output seconds
+            available = max(0.0, (src_dur - src_in) / speed)
+            plan.pad = min(needed, max(0.0, needed - available))
         plans.append(plan)
     return plans
 
@@ -111,9 +121,13 @@ def _video_chain(idx: int, plan: ClipPlan, w: int, h: int, fps: float) -> str:
     zoom_expr = f"{zf:.4f}+({zt - zf:.4f})*on/{frames}"
     x_expr = f"(iw-iw/zoom)/2+({px:.4f})*iw*on/{frames}"
     y_expr = f"(ih-ih/zoom)/2+({py:.4f})*ih*on/{frames}"
+    # 1.5x supersample smooths zoompan stepping; 2x doubled memory/CPU for no
+    # visible gain at 1080p output
+    sw = int(w * 1.5) // 2 * 2
+    sh = int(h * 1.5) // 2 * 2
     return (
-        f"[{idx}:v]scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,"
-        f"crop={w * 2}:{h * 2},"
+        f"[{idx}:v]scale={sw}:{sh}:force_original_aspect_ratio=increase,"
+        f"crop={sw}:{sh},"
         f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={frames}:s={w}x{h}:fps={fps:g},"
         f"setsar=1,trim=end={total:.4f},settb=AVTB"
         + f"[v{idx}]"
@@ -313,22 +327,54 @@ def run_render(
         str(out_path),
     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    # stderr must be drained concurrently or ffmpeg deadlocks once the pipe
+    # buffer fills; keep only a bounded tail for error reporting
+    stderr_tail: deque[str] = deque(maxlen=100)
+
+    def _drain_stderr() -> None:
+        assert proc.stderr is not None
+        for err_line in proc.stderr:
+            stderr_tail.append(err_line)
+
+    drain = threading.Thread(target=_drain_stderr, daemon=True)
+    drain.start()
+
+    timed_out = threading.Event()
+
+    def _watchdog_fire() -> None:
+        timed_out.set()
+        proc.kill()
+
+    watchdog = threading.Timer(RENDER_TIMEOUT_SEC, _watchdog_fire)
+    watchdog.start()
+
     last_emit = 0.0
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        if line.startswith("out_time_ms=") and on_progress:
-            try:
-                out_sec = int(line.split("=", 1)[1]) / 1_000_000
-            except ValueError:
-                continue
-            now = time.monotonic()
-            if now - last_emit >= 2.0:  # §6.6.8: update every 2 s
-                pct = int(min(99, max(0, out_sec / plan.expected_duration * 100)))
-                on_progress(pct)
-                last_emit = now
-    proc.wait()
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if line.startswith("out_time_ms=") and on_progress:
+                try:
+                    out_sec = int(line.split("=", 1)[1]) / 1_000_000
+                except ValueError:
+                    continue
+                now = time.monotonic()
+                if now - last_emit >= 2.0:  # §6.6.8: update every 2 s
+                    pct = int(min(99, max(0, out_sec / plan.expected_duration * 100)))
+                    on_progress(pct)
+                    last_emit = now
+        proc.wait()
+    finally:
+        watchdog.cancel()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        drain.join(timeout=5)
+
+    if timed_out.is_set():
+        raise RuntimeError(f"ffmpeg render timed out after {RENDER_TIMEOUT_SEC} s")
     if proc.returncode != 0:
-        err = proc.stderr.read() if proc.stderr else ""
+        err = "".join(stderr_tail)
         raise RuntimeError(f"ffmpeg render failed ({proc.returncode}): {err[-800:]}")
 
 

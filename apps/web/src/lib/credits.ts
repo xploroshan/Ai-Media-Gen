@@ -114,12 +114,14 @@ export async function maybeMonthlyGrant(ownerId: string, monthlyCredits: number)
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
   await prisma.$transaction(async (tx) => {
+    // lock FIRST — checking before locking lets two concurrent requests both
+    // pass the granted-this-month test and double-grant
+    const rows = await tx.$queryRaw<{ credits_balance: number }[]>`
+      SELECT credits_balance FROM profiles WHERE id = ${ownerId} FOR UPDATE`;
     const granted = await tx.creditLedger.findFirst({
       where: { ownerId, reason: "monthly_grant", createdAt: { gte: monthStart } },
     });
     if (granted) return;
-    const rows = await tx.$queryRaw<{ credits_balance: number }[]>`
-      SELECT credits_balance FROM profiles WHERE id = ${ownerId} FOR UPDATE`;
     const balance = rows[0]?.credits_balance;
     if (balance === undefined || balance >= monthlyCredits) return;
     await tx.creditLedger.create({

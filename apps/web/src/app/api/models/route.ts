@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/models — active gen model routing table (slugs stay server-side only). */
-export async function GET() {
+async function handleGET() {
   const { response } = await apiSession();
   if (response) return response;
   const models = await prisma.genModel.findMany({ where: { active: true } });
@@ -18,3 +19,5 @@ export async function GET() {
     })),
   });
 }
+
+export const GET = withApi(handleGET);

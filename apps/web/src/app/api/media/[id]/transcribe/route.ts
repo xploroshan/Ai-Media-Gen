@@ -4,11 +4,12 @@ import { apiError } from "@reelforge/shared";
 import { prisma } from "@/lib/db";
 import { enqueueJob } from "@/lib/jobs";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 const BodySchema = z.object({ lang: z.enum(["en", "hi"]).optional() }).default({});
 
 /** POST /api/media/:id/transcribe — enqueue faster-whisper transcription (SPEC §5.2). */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { session, response } = await apiSession();
   if (response) return response;
   const { id } = await params;
@@ -39,3 +40,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   );
   return NextResponse.json({ jobId });
 }
+
+export const POST = withApi(handlePOST);

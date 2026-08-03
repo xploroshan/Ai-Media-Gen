@@ -87,6 +87,24 @@ def _create_music_track(conn, owner_id: str, path: Path, prompt: str, params: di
     return track_id
 
 
+class _Superseded(Exception):
+    """The generation row was reconciled/refunded while we were working."""
+
+
+def _checkpoint(conn, generation_id: str, params: dict) -> None:
+    """Persist take progress in the SAME tx as asset creation, lease-style guarded
+    on status='running' — a reconciled/refunded row must not gain new results."""
+    count = conn.execute(
+        text(
+            "UPDATE generations SET params=CAST(:params AS jsonb) "
+            "WHERE id=:id AND status='running'"
+        ),
+        {"params": json.dumps(params), "id": generation_id},
+    ).rowcount
+    if count == 0:
+        raise _Superseded(generation_id)
+
+
 @register("generate_ai")
 def handle(job: dict) -> dict:
     generation_id = job["payload"]["generationId"]
@@ -96,7 +114,7 @@ def handle(job: dict) -> dict:
         ).mappings().first()
     if gen is None:
         raise RuntimeError(f"generation {generation_id} not found")
-    if gen["status"] in ("done", "refunded"):
+    if gen["status"] in ("done", "refunded", "failed"):
         return {"generationId": generation_id, "status": gen["status"], "skipped": True}
 
     params = _load_json(gen["params"]) or {}
@@ -107,70 +125,133 @@ def handle(job: dict) -> dict:
         return {"generationId": generation_id, "status": "refunded", "blocked": True}
 
     with get_engine().begin() as conn:
-        conn.execute(
-            text("UPDATE generations SET status='running' WHERE id=:id"),
+        claimed = conn.execute(
+            text(
+                "UPDATE generations SET status='running' "
+                "WHERE id=:id AND status IN ('queued','running')"
+            ),
             {"id": generation_id},
-        )
+        ).rowcount
+    if claimed == 0:  # reconciler refunded it between our read and now
+        return {"generationId": generation_id, "status": "superseded", "skipped": True}
 
     provider = get_provider()
     takes = 2 if params.get("bestOf2") else 1
     # QC-HOOK: a quality-scoring call would slot in here to auto-pick the best take
-    asset_ids: list[str] = []
-    music_track_ids: list[str] = []
+    # resume from a prior crashed attempt's checkpoint (§5.3 retries)
+    result_ids: list[str] = list(params.get("results") or [])
+    takes_done: int = int(params.get("takesDone") or 0)
     errors: list[str] = []
+    vendor_cost = 0.0
+    vendor_cost_known = False
 
-    for _take in range(takes):
-        result = provider.generate(gen["kind"], gen["model_slug"], gen["prompt"], params)
-        if result.status != "done" or not result.result_paths:
-            errors.append(result.error or "generation failed")
-            continue
-        with get_engine().begin() as conn:
-            for i, path in enumerate(result.result_paths):
-                if gen["kind"] == "music":
-                    music_track_ids.append(
-                        _create_music_track(conn, gen["owner_id"], path, gen["prompt"], params)
-                    )
-                else:
-                    asset_ids.append(_create_asset(conn, gen["owner_id"], path, generation_id, i))
-        for path in result.result_paths:
-            path.unlink(missing_ok=True)
+    try:
+        # takes_done counts DELIVERED takes; a failed take is simply re-attempted
+        # on the next retry (the checkpoint resumes with the delivered ones kept)
+        for _ in range(max(0, takes - takes_done)):
+            result = provider.generate(gen["kind"], gen["model_slug"], gen["prompt"], params)
+            if result.status != "done" or not result.result_paths:
+                errors.append(result.error or "generation failed")
+                continue
+            if result.cost_usd is not None:
+                vendor_cost += result.cost_usd
+                vendor_cost_known = True
+            with get_engine().begin() as conn:
+                for i, path in enumerate(result.result_paths):
+                    if gen["kind"] == "music":
+                        result_ids.append(
+                            _create_music_track(conn, gen["owner_id"], path, gen["prompt"], params)
+                        )
+                    else:
+                        result_ids.append(
+                            _create_asset(conn, gen["owner_id"], path, generation_id, i)
+                        )
+                takes_done += 1
+                params = {**params, "results": result_ids, "takesDone": takes_done}
+                _checkpoint(conn, generation_id, params)
+            for path in result.result_paths:
+                path.unlink(missing_ok=True)
+    except _Superseded:
+        return {"generationId": generation_id, "status": "superseded", "skipped": True}
 
-    if not asset_ids and not music_track_ids:
+    error_text = "; ".join(errors)[:400] or "generation failed"
+    if not result_ids:
         if job["attempts"] >= MAX_ATTEMPTS:
-            _fail_terminal(generation_id, "; ".join(errors)[:400] or "generation failed")
-        raise RuntimeError("; ".join(errors)[:400] or "generation failed")
+            _fail_terminal(generation_id, error_text)
+            return {"generationId": generation_id, "status": "refunded"}
+        raise RuntimeError(error_text)
+    if takes_done < takes and job["attempts"] < MAX_ATTEMPTS:
+        # partial best-of-2: retry the missing take (checkpoint resumes from here)
+        raise RuntimeError(f"partial results ({takes_done}/{takes} takes): {error_text}")
 
-    for asset_id in asset_ids:
-        enqueue_job("analyze_media", {"assetId": asset_id}, owner_id=gen["owner_id"], priority=6)
-    for track_id in music_track_ids:
-        enqueue_job("beats", {"assetId": track_id}, owner_id=gen["owner_id"], priority=6)
-
-    result_ids = asset_ids or music_track_ids
-    new_params = {**params, "results": result_ids}
     # Best-of-2 keeps result_asset_id NULL until the user picks a take (§8.3)
     chosen = None if (params.get("bestOf2") and len(result_ids) > 1) else result_ids[0]
+    missing_takes = max(0, takes - takes_done)
+    per_take_cost = int(gen["credit_cost"]) // takes if takes else 0
+    refund = per_take_cost * missing_takes
+
     with get_engine().begin() as conn:
-        conn.execute(
+        count = conn.execute(
             text(
                 "UPDATE generations SET status='done', result_asset_id=:rid, "
-                "params=CAST(:params AS jsonb), vendor_cost_usd=0 WHERE id=:id"
+                "params=CAST(:params AS jsonb), vendor_cost_usd=:vc, "
+                "credit_cost=credit_cost - :refund "
+                "WHERE id=:id AND status='running'"
             ),
             {
                 "rid": chosen,
-                "params": json.dumps(new_params),
+                "params": json.dumps({**params, "results": result_ids}),
+                "vc": round(vendor_cost, 4) if vendor_cost_known else None,
+                "refund": refund,
                 "id": generation_id,
             },
-        )
-    return {"generationId": generation_id, "status": "done", "results": result_ids}
+        ).rowcount
+        if count == 0:  # superseded mid-flight — do not deliver or refund
+            return {"generationId": generation_id, "status": "superseded", "skipped": True}
+        if refund > 0:
+            profile = conn.execute(
+                text("SELECT credits_balance FROM profiles WHERE id=:id FOR UPDATE"),
+                {"id": gen["owner_id"]},
+            ).mappings().one()
+            new_balance = profile["credits_balance"] + refund
+            conn.execute(
+                text(
+                    "INSERT INTO credit_ledger (id, owner_id, delta, reason, ref_id, "
+                    "balance_after, created_at) VALUES "
+                    "(substr(md5(random()::text || clock_timestamp()::text), 1, 25), "
+                    ":owner, :delta, 'partial_refund', :ref, :bal, now())"
+                ),
+                {"owner": gen["owner_id"], "delta": refund, "ref": generation_id,
+                 "bal": new_balance},
+            )
+            conn.execute(
+                text("UPDATE profiles SET credits_balance=:bal WHERE id=:id"),
+                {"bal": new_balance, "id": gen["owner_id"]},
+            )
+
+    # only a committed 'done' delivers results downstream
+    for rid in result_ids:
+        if gen["kind"] == "music":
+            enqueue_job("beats", {"assetId": rid}, owner_id=gen["owner_id"], priority=6)
+        else:
+            enqueue_job("analyze_media", {"assetId": rid}, owner_id=gen["owner_id"], priority=6)
+
+    return {"generationId": generation_id, "status": "done", "results": result_ids,
+            "partialRefund": refund}
 
 
 def _fail_terminal(generation_id: str, error: str) -> None:
-    """Terminal failure: mark failed, then refund atomically (§8.4, §5.3)."""
+    """Terminal failure: record the error, then refund atomically (§8.4, §5.3).
+
+    The status flip happens inside refund_generation (to 'refunded', or 'failed'
+    for zero-cost rows) so there is no window where a failed generation holds
+    unrefunded credits.
+    """
     with get_engine().begin() as conn:
         conn.execute(
             text(
-                "UPDATE generations SET status='failed', "
-                "params = params || CAST(:extra AS jsonb) WHERE id=:id"
+                "UPDATE generations SET params = params || CAST(:extra AS jsonb) "
+                "WHERE id=:id AND status NOT IN ('done','refunded')"
             ),
             {"id": generation_id, "extra": json.dumps({"error": error})},
         )

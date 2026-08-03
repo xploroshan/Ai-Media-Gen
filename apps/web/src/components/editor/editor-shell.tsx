@@ -67,13 +67,18 @@ export function EditorShell({ projectId }: { projectId: string }) {
       const current = useEditorStore.getState().spec;
       if (!current) return false;
       setSaveState("saving");
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ editSpec: current, render }),
-      });
-      if (!res.ok) {
-        setSaveState("error");
+      try {
+        const res = await fetch(`/api/projects/${projectId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ editSpec: current, render }),
+        });
+        if (!res.ok) {
+          setSaveState("error");
+          return false;
+        }
+      } catch {
+        setSaveState("error"); // network failure — spec stays dirty, retry below
         return false;
       }
       markSaved();
@@ -89,6 +94,23 @@ export function EditorShell({ projectId }: { projectId: string }) {
     const timer = setTimeout(() => void save(false), AUTOSAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [dirty, spec, save]);
+
+  // failed autosave: keep retrying while there are unsaved changes
+  useEffect(() => {
+    if (saveState !== "error" || !dirty) return;
+    const timer = setTimeout(() => void save(false), 5000);
+    return () => clearTimeout(timer);
+  }, [saveState, dirty, save]);
+
+  // unsaved changes must not silently vanish on tab close
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   // keyboard shortcuts (SPEC §7)
   useEffect(() => {
@@ -125,9 +147,12 @@ export function EditorShell({ projectId }: { projectId: string }) {
 
   async function previewRender() {
     setRendering(true);
-    const ok = await save(true);
-    if (ok) await mutate();
-    setRendering(false);
+    try {
+      const ok = await save(true);
+      if (ok) await mutate();
+    } finally {
+      setRendering(false);
+    }
   }
 
   if (!project || !spec) {

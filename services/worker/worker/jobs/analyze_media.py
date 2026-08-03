@@ -14,7 +14,7 @@ import numpy as np
 
 from worker.jobs import register
 from worker.lib import assets, clip_embed, exif, faces, ffmpeg, s3, scoring
-from worker.lib.db import enqueue_job, get_engine
+from worker.lib.db import get_engine
 from worker.lib.settings import get_settings
 
 log = logging.getLogger("worker.analyze")
@@ -28,12 +28,11 @@ def _derived_key(owner_id: str, asset_id: str, name: str) -> str:
     return f"{bucket}/{owner_id}/{asset_id}/{name}"
 
 
-def _analyze_image(asset: dict, local: Path, tmp: Path) -> dict[str, Any]:
+def _analyze_image(
+    asset: dict, local: Path, tmp: Path, updates: dict[str, Any], analysis: dict[str, Any]
+) -> None:
     import cv2
     from PIL import Image
-
-    updates: dict[str, Any] = {}
-    analysis: dict[str, Any] = {}
 
     with Image.open(local) as img:
         updates["width"], updates["height"] = img.size
@@ -80,8 +79,6 @@ def _analyze_image(asset: dict, local: Path, tmp: Path) -> dict[str, Any]:
     with PILImage.open(local) as img:
         updates["phash"] = str(imagehash.phash(img))
 
-    return {"updates": updates, "analysis": analysis}
-
 
 def _video_motion_and_audio(local: Path, duration: float, tmp: Path) -> tuple[np.ndarray, float]:
     """Combined per-hop score 0.6*motion + 0.4*audioEnergy at AUDIO_HOP_SEC grid."""
@@ -89,24 +86,34 @@ def _video_motion_and_audio(local: Path, duration: float, tmp: Path) -> tuple[np
 
     n_hops = max(1, int(duration / AUDIO_HOP_SEC))
 
-    # motion: mean abs frame diff at 2 fps
+    # motion: mean abs frame diff at ~2 fps — sequential grab() with frame
+    # skipping instead of per-sample seeks (CAP_PROP_POS_MSEC seeks re-decode
+    # from the previous keyframe every time and dominated analysis runtime)
     cap = cv2.VideoCapture(str(local))
     motion = np.zeros(n_hops, dtype=np.float64)
     prev = None
-    step = 1.0 / MOTION_SAMPLE_FPS
-    t = 0.0
-    while t < duration:
-        cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
-        ok, frame = cap.read()
-        if not ok:
+    src_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    if not src_fps or src_fps <= 0:
+        src_fps = 30.0
+    frame_step = max(1, int(round(src_fps / MOTION_SAMPLE_FPS)))
+    frame_idx = 0
+    while True:
+        if not cap.grab():
             break
-        small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (160, 90))
-        if prev is not None:
-            diff = float(np.mean(np.abs(small.astype(np.int16) - prev.astype(np.int16))))
-            hop = min(n_hops - 1, int(t / AUDIO_HOP_SEC))
-            motion[hop] = max(motion[hop], diff)
-        prev = small
-        t += step
+        if frame_idx % frame_step == 0:
+            t = frame_idx / src_fps
+            if t >= duration:
+                break
+            ok, frame = cap.retrieve()
+            if not ok:
+                break
+            small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (160, 90))
+            if prev is not None:
+                diff = float(np.mean(np.abs(small.astype(np.int16) - prev.astype(np.int16))))
+                hop = min(n_hops - 1, int(t / AUDIO_HOP_SEC))
+                motion[hop] = max(motion[hop], diff)
+            prev = small
+        frame_idx += 1
     cap.release()
     if motion.max() > 0:
         motion = motion / motion.max()
@@ -129,11 +136,10 @@ def _video_motion_and_audio(local: Path, duration: float, tmp: Path) -> tuple[np
     return 0.6 * motion + 0.4 * audio, AUDIO_HOP_SEC
 
 
-def _analyze_video(asset: dict, local: Path, tmp: Path) -> dict[str, Any]:
+def _analyze_video(
+    asset: dict, local: Path, tmp: Path, updates: dict[str, Any], analysis: dict[str, Any]
+) -> None:
     import cv2
-
-    updates: dict[str, Any] = {}
-    analysis: dict[str, Any] = {}
 
     probe = ffmpeg.probe_summary(local)
     if not probe["hasVideo"]:
@@ -215,13 +221,12 @@ def _analyze_video(asset: dict, local: Path, tmp: Path) -> dict[str, Any]:
     with Image.open(cover) as img:
         updates["phash"] = str(imagehash.phash(img))
 
-    return {"updates": updates, "analysis": analysis}
 
-
-def _analyze_audio(asset: dict, local: Path, tmp: Path) -> dict[str, Any]:
+def _analyze_audio(
+    asset: dict, local: Path, tmp: Path, updates: dict[str, Any], analysis: dict[str, Any]
+) -> None:
     probe = ffmpeg.probe_summary(local)
-    updates: dict[str, Any] = {"duration_sec": probe["durationSec"]}
-    analysis: dict[str, Any] = {}
+    updates["duration_sec"] = probe["durationSec"]
     wav = ffmpeg.extract_wav(local, tmp / "audio.wav")
     if wav is not None:
         import librosa
@@ -229,14 +234,23 @@ def _analyze_audio(asset: dict, local: Path, tmp: Path) -> dict[str, Any]:
         y, sr = librosa.load(str(wav), sr=22050, mono=True)
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr, units="time")
         analysis["beat_times"] = [round(float(b), 3) for b in beats]
-    return {"updates": updates, "analysis": analysis}
 
 
 def _maybe_enqueue_detect_events(owner_id: str) -> None:
-    """Enqueue clustering when there are unclustered ready assets and no queued job."""
-    with get_engine().begin() as conn:
-        from sqlalchemy import text
+    """Enqueue clustering when there are unclustered ready assets and no queued job.
 
+    The check and the insert share one transaction under a per-owner advisory
+    lock, so two analyze jobs finishing together can't both enqueue.
+    """
+    import json
+
+    from sqlalchemy import text
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext('detect_events:' || :o))"),
+            {"o": owner_id},
+        )
         pending = conn.execute(
             text(
                 "SELECT count(*) FROM jobs WHERE type='detect_events' "
@@ -251,8 +265,16 @@ def _maybe_enqueue_detect_events(owner_id: str) -> None:
             ),
             {"o": owner_id},
         ).scalar()
-    if not pending and not analyzing:
-        enqueue_job("detect_events", {"ownerId": owner_id}, owner_id=owner_id, priority=7)
+        if not pending and not analyzing:
+            conn.execute(
+                text(
+                    "INSERT INTO jobs (id, type, status, priority, payload, owner_id, "
+                    "created_at) VALUES "
+                    "(substr(md5(random()::text || clock_timestamp()::text), 1, 25), "
+                    "'detect_events', 'queued', 7, CAST(:payload AS jsonb), :o, now())"
+                ),
+                {"payload": json.dumps({"ownerId": owner_id}), "o": owner_id},
+            )
 
 
 @register("analyze_media")
@@ -263,29 +285,40 @@ def handle(job: dict) -> dict:
         raise RuntimeError(f"asset {asset_id} not found")
 
     assets.update_asset(asset_id, status="analyzing")
-    local = s3.download_to_tmp(asset["storage_key"])
+    # analyzers accumulate into these as they go, so a mid-pipeline failure
+    # still persists everything computed so far (SPEC §6.1.8)
+    updates: dict[str, Any] = {}
+    analysis: dict[str, Any] = {}
+    local: Path | None = None
     try:
+        local = s3.download_to_tmp(asset["storage_key"])
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
-            try:
-                if asset["kind"] == "image":
-                    out = _analyze_image(asset, local, tmp)
-                elif asset["kind"] == "video":
-                    out = _analyze_video(asset, local, tmp)
-                elif asset["kind"] == "audio":
-                    out = _analyze_audio(asset, local, tmp)
-                else:
-                    raise RuntimeError(f"unknown media kind {asset['kind']!r}")
-            except Exception as exc:
-                # SPEC §6.1.8: keep partial analysis, mark failed with reason
-                assets.update_asset(asset_id, status="failed")
-                raise RuntimeError(f"analysis failed: {exc}") from exc
-
-            if out["analysis"]:
-                assets.upsert_analysis(asset_id, **out["analysis"])
-            assets.update_asset(asset_id, status="ready", **out["updates"])
+            if asset["kind"] == "image":
+                _analyze_image(asset, local, tmp, updates, analysis)
+            elif asset["kind"] == "video":
+                _analyze_video(asset, local, tmp, updates, analysis)
+            elif asset["kind"] == "audio":
+                _analyze_audio(asset, local, tmp, updates, analysis)
+            else:
+                raise RuntimeError(f"unknown media kind {asset['kind']!r}")
+    except Exception as exc:
+        # SPEC §6.1.8: keep partial analysis, mark failed with reason
+        try:
+            if analysis:
+                assets.upsert_analysis(asset_id, **analysis)
+            assets.update_asset(asset_id, status="failed", **updates)
+        except Exception:  # persist is best-effort; the failure below still surfaces
+            log.exception("failed to persist partial analysis for %s", asset_id)
+            assets.update_asset(asset_id, status="failed")
+        raise RuntimeError(f"analysis failed: {exc}") from exc
     finally:
-        local.unlink(missing_ok=True)
+        if local is not None:
+            local.unlink(missing_ok=True)
+
+    if analysis:
+        assets.upsert_analysis(asset_id, **analysis)
+    assets.update_asset(asset_id, status="ready", **updates)
 
     _maybe_enqueue_detect_events(asset["owner_id"])
     return {"assetId": asset_id, "status": "ready"}

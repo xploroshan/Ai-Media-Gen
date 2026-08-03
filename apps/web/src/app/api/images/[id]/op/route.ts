@@ -6,6 +6,7 @@ import { enqueueJob } from "@/lib/jobs";
 import { apiSession } from "@/lib/session";
 import { BUCKETS, s3 } from "@/lib/storage";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { withApi } from "@/lib/with-api";
 
 const BodySchema = z.object({
   op: z.enum(IMAGE_OPS),
@@ -17,7 +18,7 @@ const BodySchema = z.object({
 });
 
 /** POST /api/images/:id/op — enqueue an image_op job (SPEC §5.4, §6.7). */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { session, response } = await apiSession();
   if (response) return response;
   const { id } = await params;
@@ -69,3 +70,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   );
   return NextResponse.json({ jobId });
 }
+
+export const POST = withApi(handlePOST);

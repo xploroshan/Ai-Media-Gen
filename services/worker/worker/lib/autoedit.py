@@ -248,6 +248,20 @@ def plan_autoedit(
 
     pace = vibe_config.get("paceSec", {"low": 2.2, "high": 1.4})
     beats = sorted(b for b in beat_times if b >= 0) or synth_beat_grid(target_sec)
+    # music shorter than the timeline: extrapolate the grid at the median beat
+    # interval so late cuts still land on a steady pulse instead of nothing
+    if beats[-1] < target_sec - 1e-6:
+        if len(beats) >= 2:
+            intervals = sorted(
+                b2 - b1 for b1, b2 in zip(beats, beats[1:], strict=False) if b2 - b1 > 1e-3
+            )
+            step = intervals[len(intervals) // 2] if intervals else 0.5
+        else:
+            step = 0.5
+        t = beats[-1] + step
+        while t <= target_sec + step:
+            beats.append(round(t, 3))
+            t += step
     slots = plan_slots(target_sec, beats, energy, pace["low"], pace["high"], steering)
 
     kept, cluster_of = filter_candidates(candidates)

@@ -7,6 +7,7 @@ cleanup ops.
 from __future__ import annotations
 
 import tempfile
+import uuid
 from pathlib import Path
 
 from sqlalchemy import text
@@ -24,31 +25,29 @@ def _create_derived_asset(source: dict, out_path: Path, op: str) -> str:
     settings = get_settings()
     ext = out_path.suffix.lstrip(".")
     base = Path(source["filename"]).stem
+    # upload FIRST to a deterministic key, then insert — a failed upload must
+    # never leave a DB row pointing at a missing object
+    asset_id = uuid.uuid4().hex[:25]
+    key = f"{settings.bucket_derived}/{source['owner_id']}/{asset_id}.{ext}"
+    s3.upload_file(out_path, key)
     with get_engine().begin() as conn:
-        row = conn.execute(
+        conn.execute(
             text(
                 "INSERT INTO media_assets (id, owner_id, kind, status, storage_key, filename, "
                 "bytes, synthetic, taken_at, created_at) VALUES "
-                "(substr(md5(random()::text || clock_timestamp()::text), 1, 25), "
-                ":owner, 'image', 'analyzing', 'pending', :filename, :bytes, "
-                ":synthetic, :taken, now()) RETURNING id"
+                "(:id, :owner, 'image', 'analyzing', :key, :filename, :bytes, "
+                ":synthetic, :taken, now())"
             ),
             {
+                "id": asset_id,
                 "owner": source["owner_id"],
+                "key": key,
                 "filename": f"{base}-{op}.{ext}",
                 "bytes": out_path.stat().st_size,
                 "synthetic": bool(source.get("synthetic")),  # cleanup keeps original flag
                 "taken": source.get("taken_at"),
             },
-        ).first()
-        assert row is not None
-        asset_id = row[0]
-        key = f"{settings.bucket_derived}/{source['owner_id']}/{asset_id}.{ext}"
-        conn.execute(
-            text("UPDATE media_assets SET storage_key=:k WHERE id=:id"),
-            {"k": key, "id": asset_id},
         )
-    s3.upload_file(out_path, key)
     return asset_id
 
 

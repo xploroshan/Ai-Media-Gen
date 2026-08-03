@@ -2,14 +2,16 @@ import { NextResponse } from "next/server";
 import { apiError } from "@reelforge/shared";
 import { prisma } from "@/lib/db";
 import { apiSession } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/jobs/:id — poll job status (SPEC §5.4); 2 s client polling while active. */
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { session, response } = await apiSession();
   if (response) return response;
   const { id } = await params;
   const job = await prisma.job.findUnique({ where: { id } });
-  if (!job || (job.ownerId && job.ownerId !== session.user.id)) {
+  // null-owner jobs are system jobs — not readable through the per-user endpoint
+  if (!job || job.ownerId !== session.user.id) {
     return NextResponse.json(apiError("not_found", "Job not found"), { status: 404 });
   }
   const result = (job.result ?? {}) as Record<string, unknown>;
@@ -22,3 +24,5 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     error: job.status === "failed" ? job.error : undefined,
   });
 }
+
+export const GET = withApi(handleGET);

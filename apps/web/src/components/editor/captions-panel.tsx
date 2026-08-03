@@ -41,11 +41,20 @@ export function CaptionsPanel({ assets }: { assets: AssetMap }) {
       if (!res.ok) throw new Error(`transcribe request failed (${res.status})`);
       const { jobId } = (await res.json()) as { jobId: string };
       const deadline = Date.now() + 240_000;
+      let misses = 0; // tolerate transient poll failures
       for (;;) {
-        const jobRes = await fetch(`/api/jobs/${jobId}`);
-        const job = (await jobRes.json()) as { status: string; error?: string };
-        if (job.status === "done") break;
-        if (job.status === "failed") throw new Error(job.error ?? "transcription failed");
+        let job: { status: string; error?: string } | null = null;
+        try {
+          const jobRes = await fetch(`/api/jobs/${jobId}`);
+          if (!jobRes.ok) throw new Error(`poll ${jobRes.status}`);
+          job = (await jobRes.json()) as { status: string; error?: string };
+          misses = 0;
+        } catch {
+          misses += 1;
+          if (misses >= 5) throw new Error("lost connection while transcribing");
+        }
+        if (job?.status === "done") break;
+        if (job?.status === "failed") throw new Error(job.error ?? "transcription failed");
         if (Date.now() > deadline) throw new Error("transcription timed out");
         await new Promise((r) => setTimeout(r, 2000));
       }

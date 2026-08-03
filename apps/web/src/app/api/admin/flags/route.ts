@@ -3,9 +3,10 @@ import { z } from "zod";
 import { apiError } from "@reelforge/shared";
 import { prisma } from "@/lib/db";
 import { apiAdmin } from "@/lib/session";
+import { withApi } from "@/lib/with-api";
 
 /** GET/POST /api/admin/flags — feature flag store (SPEC §4 FeatureFlag). */
-export async function GET() {
+async function handleGET() {
   const { response } = await apiAdmin();
   if (response) return response;
   const flags = await prisma.featureFlag.findMany();
@@ -14,7 +15,7 @@ export async function GET() {
 
 const BodySchema = z.object({ key: z.string().min(1).max(64), value: z.unknown() });
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const { response } = await apiAdmin();
   if (response) return response;
   const parsed = BodySchema.safeParse(await req.json().catch(() => null));
@@ -28,3 +29,6 @@ export async function POST(req: NextRequest) {
   });
   return NextResponse.json({ flag });
 }
+
+export const GET = withApi(handleGET);
+export const POST = withApi(handlePOST);

@@ -3,9 +3,10 @@ import { apiError, type EditSpec } from "@reelforge/shared";
 import { prisma } from "@/lib/db";
 import { apiSession } from "@/lib/session";
 import { presignGet } from "@/lib/storage";
+import { withApi } from "@/lib/with-api";
 
 /** GET /api/exports/:id — status, download URL, share caption (SPEC §9). */
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { session, response } = await apiSession();
   if (response) return response;
   const { id } = await params;
@@ -51,3 +52,5 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     caption,
   });
 }
+
+export const GET = withApi(handleGET);
