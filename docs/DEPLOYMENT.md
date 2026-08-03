@@ -1,6 +1,10 @@
 # ReelForge v1 — Deployment Guide
 
 > Companion documents: [ARCHITECTURE.md](./ARCHITECTURE.md) · [FLOWCHARTS.md](./FLOWCHARTS.md)
+>
+> **New to deploying?** Follow the click-by-click
+> [DEPLOYMENT_WALKTHROUGH.md](./DEPLOYMENT_WALKTHROUGH.md) instead — this page
+> is the condensed reference.
 
 ReelForge deploys as **four pieces**: Postgres, an S3-compatible object store,
 the **web** service (Next.js, stateless), and the **worker** service (Python,

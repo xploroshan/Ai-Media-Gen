@@ -99,6 +99,7 @@ No IaC is required for v1. Payments are stubbed (`PaymentsProvider` +
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system design, contracts, data model, queue, pipelines
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — env reference, local dev, production (Railway), scaling, ops runbook
+- [docs/DEPLOYMENT_WALKTHROUGH.md](docs/DEPLOYMENT_WALKTHROUGH.md) — beginner-friendly, click-by-click deploy guide
 - [docs/FLOWCHARTS.md](docs/FLOWCHARTS.md) — Mermaid flow charts for every major flow
 - [SPEC.md](SPEC.md) — the authoritative product spec · [DECISIONS.md](DECISIONS.md) · [REVIEW.md](REVIEW.md)
 
