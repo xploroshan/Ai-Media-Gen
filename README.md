@@ -95,6 +95,13 @@ Create one Railway project with four services:
 No IaC is required for v1. Payments are stubbed (`PaymentsProvider` +
 `/api/webhooks/razorpay` TODO): plans are toggled from the admin page.
 
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system design, contracts, data model, queue, pipelines
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — env reference, local dev, production (Railway), scaling, ops runbook
+- [docs/FLOWCHARTS.md](docs/FLOWCHARTS.md) — Mermaid flow charts for every major flow
+- [SPEC.md](SPEC.md) — the authoritative product spec · [DECISIONS.md](DECISIONS.md) · [REVIEW.md](REVIEW.md)
+
 ## Repo map
 
 ```
