@@ -13,15 +13,30 @@ test.describe("P1 — media library", () => {
 
     await page.getByTestId("upload-input").setInputFiles(SIX.map((f) => path.join(FIXTURES, f)));
 
-    // all six analyzed → thumbs rendered
+    // analyzing banner normally shows while jobs run; tolerate a fast pipeline
+    // finishing before we can observe it (appearance is best-effort, the
+    // DISAPPEARANCE below is the real assertion)
+    const sawBanner = await page
+      .getByTestId("analyzing-banner")
+      .waitFor({ state: "visible", timeout: 20_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    // all six analyzed → thumbs rendered, banner gone
     await expect(page.getByTestId("media-thumb")).toHaveCount(6, { timeout: 240_000 });
     await expect(page.getByTestId("analyzing-banner")).toHaveCount(0, { timeout: 60_000 });
+    test.info().annotations.push({ type: "note", description: `sawAnalyzingBanner=${sawBanner}` });
 
-    // thumbs actually painted (naturalWidth > 0)
-    const widths = await page
-      .getByTestId("media-thumb")
-      .evaluateAll((imgs) => imgs.map((img) => (img as HTMLImageElement).naturalWidth));
-    expect(widths.every((w) => w > 0)).toBe(true);
+    // thumbs actually painted (poll: <img> may exist before pixels decode)
+    await expect
+      .poll(
+        async () =>
+          page
+            .getByTestId("media-thumb")
+            .evaluateAll((imgs) => imgs.every((img) => (img as HTMLImageElement).naturalWidth > 0)),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
 
     // event auto-clustered from EXIF/creation_time (all within 2026-07-15, < 4h gaps)
     await expect(page.getByTestId("event-card")).toHaveCount(1, { timeout: 120_000 });

@@ -38,8 +38,27 @@ Style: title-bold,Noto Sans,36,&H00FFFFFF,&H000000FF,&H00101010,&H80000000,-1,0,
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 Dialogue: 0,0:00:00.20,0:00:02.20,title-bold,,0,0,0,,{\\an5\\fscx60\\fscy60\\t(0,180,\\fscx100\\fscy100)\\fad(80,120)}Beach Day
-Dialogue: 0,0:00:00.50,0:00:03.50,karaoke-yellow,,0,0,0,,{\\an2}{\\k40}hello {\\k45}world {\\k50}welcome {\\k15}to {\\k65}ReelForge
+Dialogue: 0,0:00:00.50,0:00:03.50,karaoke-yellow,,0,0,0,,{\\an2}{\\k40}hello {\\k5} {\\k45}world {\\k70} {\\k50}welcome {\\k5} {\\k15}to {\\k5} {\\k65}ReelForge
 Dialogue: 0,0:00:03.55,0:00:04.10,karaoke-yellow,,0,0,0,,{\\an2}{\\k55}captions
+"""
+
+EXPECTED_HI = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 540
+PlayResY: 960
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: karaoke-yellow,Noto Sans,27,&H00FFFFFF,&H0000E5FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,1,0,2,40,40,60,1
+Style: title-serif-white,Noto Serif,34,&H00FFFFFF,&H000000FF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,1,0,2,40,40,60,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.00,title-serif-white,,0,0,0,,{\\an8\\fad(250,250)}गोवा यात्रा
+Dialogue: 0,0:00:00.40,0:00:03.40,karaoke-yellow,,0,0,0,,{\\an2}{\\k60}नमस्ते {\\k10} {\\k60}दुनिया {\\k30} {\\k80}रीलफोर्ज {\\k5} {\\k15}में {\\k5} {\\k35}आपका
+Dialogue: 0,0:00:03.45,0:00:04.10,karaoke-yellow,,0,0,0,,{\\an2}{\\k45}स्वागत {\\k5} {\\k15}है
 """
 
 
@@ -70,11 +89,7 @@ class TestAssSnapshots:
             ],
             {"enabled": True, "styleId": "karaoke-yellow", "lang": "hi", "words": HI_WORDS},
         )
-        # Devanagari text must be preserved verbatim (Noto fonts burn it in)
-        assert "गोवा यात्रा" in out
-        assert "{\\k60}नमस्ते" in out
-        assert "स्वागत" in out
-        assert "\\an8\\fad(250,250)" in out  # upper position + fade animation
+        assert out == EXPECTED_HI
         assert "Style: title-serif-white,Noto Serif" in out
         # stable golden shape: same input twice → identical output
         again = build_ass(

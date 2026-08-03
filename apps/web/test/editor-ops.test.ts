@@ -72,6 +72,22 @@ describe("editor ops (pure)", () => {
     expect(ops.videoTrack(next).clips[0]!.duration).toBe(3.0);
   });
 
+  it("updateClip speed change recomputes duration from the source span", () => {
+    // c1 spans src [1,3] at 1x = 2s; at 0.5x the same span plays for 4s
+    const next = ops.updateClip(sampleSpec(), "c1", { speed: 0.5 });
+    const track = ops.videoTrack(next);
+    expect(track.clips[0]!.duration).toBe(4.0);
+    expect(track.clips[0]!.srcOut).toBe(3); // source span untouched
+    expect(track.clips[1]!.timelineStart).toBe(4.0); // timeline re-flowed
+    expect(next.durationSec).toBe(8.0);
+    expect(EditSpecSchema.safeParse(next).success).toBe(true);
+  });
+
+  it("updateClip speed-up shortens the clip", () => {
+    const next = ops.updateClip(sampleSpec(), "c1", { speed: 2 });
+    expect(ops.videoTrack(next).clips[0]!.duration).toBe(1.0);
+  });
+
   it("trim never mutates the input spec", () => {
     const spec = sampleSpec();
     const json = JSON.stringify(spec);

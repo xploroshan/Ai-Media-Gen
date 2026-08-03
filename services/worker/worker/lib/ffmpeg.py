@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,12 @@ def probe_summary(path: Path | str) -> dict[str, Any]:
     tags = {k.lower(): v for k, v in (fmt.get("tags") or {}).items()}
     if ct := tags.get("creation_time"):
         with contextlib.suppress(ValueError):
-            out["creationTime"] = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(ct.replace("Z", "+00:00"))
+            # normalize to NAIVE UTC: EXIF taken_at is naive, and mixing aware
+            # and naive datetimes breaks event clustering (DECISIONS.md #12)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+            out["creationTime"] = parsed
     for stream in data.get("streams", []):
         if stream.get("codec_type") == "video" and not out["hasVideo"]:
             out["hasVideo"] = True

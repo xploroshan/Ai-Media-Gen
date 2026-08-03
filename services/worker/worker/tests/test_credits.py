@@ -142,6 +142,56 @@ class TestLedger:
         assert replayed == balance
         assert balance == 120 - 5 - 7 - 11 - 13 + 7 + 5
 
+    def test_refund_refuses_delivered_generation(self, owner):
+        gen = spend(owner, 30, status="done")
+        assert refund_generation(gen) is False  # results were delivered
+        assert balance_of(owner) == 90
+        with db.get_engine().begin() as conn:
+            status = conn.execute(
+                text("SELECT status FROM generations WHERE id=:id"), {"id": gen}
+            ).scalar()
+        assert status == "done"
+
+    def test_refund_idempotent_across_reasons(self, owner):
+        """A partial_refund row already returned credits — a full refund must not stack."""
+        gen = spend(owner, 30, status="failed")
+        with db.get_engine().begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO credit_ledger (id, owner_id, delta, reason, ref_id, "
+                    "balance_after, created_at) VALUES (:lid, :o, 15, 'partial_refund', "
+                    ":ref, 105, now())"
+                ),
+                {"lid": _cuid(), "o": owner, "ref": gen},
+            )
+            conn.execute(
+                text("UPDATE profiles SET credits_balance=105 WHERE id=:id"), {"id": owner}
+            )
+        assert refund_generation(gen) is False  # positive-delta row exists for this ref
+        assert balance_of(owner) == 105
+
+    def test_concurrent_refunds_apply_exactly_once(self, owner):
+        import threading
+
+        gen = spend(owner, 40, status="failed")
+        results: list[bool] = []
+        lock = threading.Lock()
+
+        def attempt() -> None:
+            applied = refund_generation(gen)
+            with lock:
+                results.append(applied)
+
+        threads = [threading.Thread(target=attempt) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert results.count(True) == 1, "exactly one concurrent refund may win"
+        assert balance_of(owner) == 120
+        _, _, consistent = replay_ledger_balance(owner)
+        assert consistent
+
     def test_reconcile_refunds_orphaned_generations(self, owner):
         gen = spend(owner, 20, status="running", with_job=True)  # job already failed
         assert balance_of(owner) == 100

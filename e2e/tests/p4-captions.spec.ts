@@ -30,6 +30,27 @@ async function waitIdle(page: Page, id: string, timeoutMs = 300_000): Promise<Pr
   }
 }
 
+function previewKey(url: string | null): string | null {
+  return url ? new URL(url).pathname : null; // presigned query churns; the key doesn't
+}
+
+async function waitRenderedAfter(
+  page: Page,
+  id: string,
+  prevPreviewUrl: string | null,
+  timeoutMs = 300_000,
+): Promise<ProjectApi> {
+  const prevKey = previewKey(prevPreviewUrl);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const project = await getProject(page, id);
+    if (project.activeJob || previewKey(project.previewUrl) !== prevKey) break;
+    if (Date.now() > deadline) throw new Error("render never started");
+    await page.waitForTimeout(1000);
+  }
+  return waitIdle(page, id, timeoutMs);
+}
+
 test.describe("P4 — captions + audio", () => {
   test("speech fixture → words editable → burned render completes", async ({ page }) => {
     test.setTimeout(720_000);
@@ -74,10 +95,12 @@ test.describe("P4 — captions + audio", () => {
     const nudged = await getProject(page, projectId);
     expect(nudged.editSpec.captions.words[0]!.s).toBeCloseTo(before.s + 0.1, 2);
 
-    // burned render completes with captions enabled
+    // burned render completes with captions enabled — and is a NEW render
+    const beforeRender = await getProject(page, projectId);
     await page.getByTestId("preview-render").click();
-    const rendered = await waitIdle(page, projectId);
+    const rendered = await waitRenderedAfter(page, projectId, beforeRender.previewUrl);
     expect(rendered.previewUrl).toBeTruthy();
+    expect(previewKey(rendered.previewUrl)).not.toBe(previewKey(beforeRender.previewUrl));
     expect(rendered.editSpec.captions.enabled).toBe(true);
     const dl = await page.request.get(rendered.previewUrl!);
     expect(dl.ok()).toBeTruthy();

@@ -75,7 +75,10 @@ def make_candidates(n: int = 14) -> list[Candidate]:
     return out
 
 
-def plan(vibe="travel-cinematic", seed=42, target=20.0, exclude=None, steering=None, cands=None):
+def plan(
+    vibe="travel-cinematic", seed=42, target=20.0, exclude=None, steering=None,
+    cands=None, beats=None,
+):
     return plan_autoedit(
         candidates=cands or make_candidates(),
         vibe_id=vibe,
@@ -85,7 +88,7 @@ def plan(vibe="travel-cinematic", seed=42, target=20.0, exclude=None, steering=N
         height=1920,
         target_sec=target,
         seed=seed,
-        beat_times=BEATS_120,
+        beat_times=BEATS_120 if beats is None else beats,
         energy=None,
         steering=steering,
         exclude_asset_ids=exclude,
@@ -93,6 +96,18 @@ def plan(vibe="travel-cinematic", seed=42, target=20.0, exclude=None, steering=N
         music_track_id="music1",
         music_duration=30.0,
     )
+
+
+def jittered_beats(seed: int, duration: float = 40.0) -> list[float]:
+    """A realistic librosa-like grid: ~0.5 s pulse with ±40 ms jitter."""
+    import random as _random
+
+    rng = _random.Random(seed)
+    t, beats = 0.0, []
+    while t < duration:
+        beats.append(round(t, 3))
+        t += 0.5 + rng.uniform(-0.04, 0.04)
+    return beats
 
 
 def video_clips(spec):
@@ -131,12 +146,25 @@ class TestDuration:
 
 class TestBeatSync:
     @pytest.mark.parametrize("vibe", list(VIBES))
-    def test_interior_cuts_on_beats(self, vibe):
+    @pytest.mark.parametrize("seed", [7, 42, 1234])
+    def test_interior_cuts_on_beats(self, vibe, seed):
         """§6.5: every video-track cut within ±80 ms of a beat (except first/last)."""
-        spec = plan(vibe=vibe)
+        spec = plan(vibe=vibe, seed=seed)
         clips = video_clips(spec)
         beats = spec["meta"]["beatTimes"]
         for clip in clips[:-1]:
+            cut = clip["timelineStart"] + clip["duration"]
+            nearest = min(abs(cut - b) for b in beats)
+            assert nearest <= BEAT_SNAP_TOLERANCE, f"cut at {cut} off-beat by {nearest}"
+
+    @pytest.mark.parametrize("grid_seed", [3, 11])
+    def test_interior_cuts_on_jittered_beats(self, grid_seed):
+        """Real music never has a perfect 0.5 s grid — the property must hold on
+        a jittered pulse too (last cut is the ±15% target-flex boundary)."""
+        beats = jittered_beats(grid_seed)
+        spec = plan(beats=beats)
+        clips = video_clips(spec)
+        for clip in clips[:-2]:
             cut = clip["timelineStart"] + clip["duration"]
             nearest = min(abs(cut - b) for b in beats)
             assert nearest <= BEAT_SNAP_TOLERANCE, f"cut at {cut} off-beat by {nearest}"
@@ -149,10 +177,11 @@ class TestBeatSync:
 
 
 class TestShuffle:
-    def test_shuffle_at_least_40pct_different(self):
-        first = plan(seed=42)
+    @pytest.mark.parametrize("seed_pair", [(42, 43), (7, 99), (1000, 1001)])
+    def test_shuffle_at_least_40pct_different(self, seed_pair):
+        first = plan(seed=seed_pair[0])
         prior_assets = [c["assetId"] for c in video_clips(first)]
-        second = plan(seed=43, exclude=list(set(prior_assets)))
+        second = plan(seed=seed_pair[1], exclude=list(set(prior_assets)))
         new_assets = [c["assetId"] for c in video_clips(second)]
         n = len(new_assets)
         differing = sum(1 for asset_id in new_assets if asset_id not in set(prior_assets))
@@ -169,10 +198,14 @@ class TestDedupeAdjacency:
         cands = make_candidates()
         for i, c in enumerate(cands):
             c.phash = f"{bases[i // 4] ^ (1 << (i % 4)):016x}"
+        group_of = {c.id: i // 4 for i, c in enumerate(cands)}
         spec = plan(cands=cands)
         clips = video_clips(spec)
+        # cluster-level: adjacent clips must come from different NEAR-DUPE
+        # groups, not merely be different assets (4 groups make it avoidable)
         for i in range(1, len(clips)):
-            assert clips[i]["assetId"] != clips[i - 1]["assetId"]
+            a, b = clips[i - 1]["assetId"], clips[i]["assetId"]
+            assert group_of[a] != group_of[b], f"adjacent near-dupes {a},{b}"
 
 
 class TestContent:

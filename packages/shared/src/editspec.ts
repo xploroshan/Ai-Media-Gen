@@ -77,7 +77,9 @@ export const TextTrackSchema = z.object({
 export const AudioTrackSchema = z.object({
   id: z.string().min(1),
   type: z.literal("audio"),
-  clips: z.array(AudioClipSchema),
+  // v1 mixes exactly one music bed; the renderer only reads clips[0], so more
+  // than one clip would silently drop audio — reject it at the boundary
+  clips: z.array(AudioClipSchema).max(1),
 });
 
 export const TrackSchema = z.discriminatedUnion("type", [

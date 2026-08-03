@@ -99,8 +99,24 @@ class TestOffsetGolden:
              "duration": 1.0, "srcIn": 0.0, "srcOut": 1.0, "speed": 1.0},
         ]
         plans = compute_clip_extensions(clips, {"b": {"path": "y", "duration": 8.0}})
-        # only 0.1 s of material after srcOut=7.9 → 0.2 s cloned pad
+        # needed output = 2.0 + 0.3 tail; available from srcIn=6.5 is 1.5 s of
+        # source, so BOTH the 0.6 s main-body shortfall and the 0.2 s tail
+        # shortfall are cloned-frame padded (main-body shortfall finding)
         assert plans[0].ext == pytest.approx(0.3)
+        assert plans[0].pad == pytest.approx(0.8, abs=1e-6)
+
+    def test_video_pad_tail_only_when_body_covered(self):
+        clips = [
+            {
+                "id": "c1", "assetId": "b", "kind": "video", "timelineStart": 0.0,
+                "duration": 2.0, "srcIn": 5.9, "srcOut": 7.9, "speed": 1.0,
+                "transitionAfter": {"type": "fade", "duration": 0.3},
+            },
+            {"id": "c2", "assetId": "b", "kind": "video", "timelineStart": 2.0,
+             "duration": 1.0, "srcIn": 0.0, "srcOut": 1.0, "speed": 1.0},
+        ]
+        plans = compute_clip_extensions(clips, {"b": {"path": "y", "duration": 8.0}})
+        # body fully covered (5.9→7.9); only 0.1 s of tail material remains
         assert plans[0].pad == pytest.approx(0.2, abs=1e-6)
 
     def test_xfade_offset_equals_next_timeline_start(self):

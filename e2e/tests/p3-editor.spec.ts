@@ -34,6 +34,32 @@ async function waitIdle(page: Page, id: string, timeoutMs = 300_000): Promise<Pr
   }
 }
 
+/** Presigned URLs change on every request; the object KEY only changes when a
+ * new render lands (renders/<owner>/<project>/preview-<jobId>.mp4). */
+export function previewKey(url: string | null): string | null {
+  return url ? new URL(url).pathname : null;
+}
+
+/** After triggering a re-render from the UI, first wait for the render job to
+ * actually start (or the preview key to change) so waitIdle can't return early
+ * on the pre-click state, then wait for idle. */
+async function waitRenderedAfter(
+  page: Page,
+  id: string,
+  prevPreviewUrl: string | null,
+  timeoutMs = 300_000,
+): Promise<ProjectApi> {
+  const prevKey = previewKey(prevPreviewUrl);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const project = await getProject(page, id);
+    if (project.activeJob || previewKey(project.previewUrl) !== prevKey) break;
+    if (Date.now() > deadline) throw new Error("render never started");
+    await page.waitForTimeout(1000);
+  }
+  return waitIdle(page, id, timeoutMs);
+}
+
 test.describe("P3 — timeline editor", () => {
   test("trim persists; added text appears in re-rendered output", async ({ page }) => {
     test.setTimeout(720_000);
@@ -79,9 +105,12 @@ test.describe("P3 — timeline editor", () => {
     // text appears in the DOM preview
     await expect(page.getByTestId("preview-text")).toContainText("E2E Caption Check");
 
+    const beforeRender = await getProject(page, projectId);
     await page.getByTestId("preview-render").click();
-    const rendered = await waitIdle(page, projectId);
+    const rendered = await waitRenderedAfter(page, projectId, beforeRender.previewUrl);
     expect(rendered.previewUrl).toBeTruthy();
+    // a NEW preview render landed, not the pre-edit one
+    expect(previewKey(rendered.previewUrl)).not.toBe(previewKey(beforeRender.previewUrl));
     const textClips = rendered.editSpec.tracks.find((t) => t.type === "text")!.clips;
     expect(textClips.some((c) => c.text === "E2E Caption Check")).toBe(true);
 

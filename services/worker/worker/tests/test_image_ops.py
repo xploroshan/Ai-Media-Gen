@@ -32,16 +32,17 @@ class TestMaskPlumbing:
         assert out[0, 0] == 255
         assert out[5, 5] == 0
 
-    def test_opaque_rgba_with_painted_rgb_uses_luma(self):
-        # canvas exported with full alpha but white strokes on black
+    def test_opaque_rgba_alpha_wins_and_erases_everything(self):
+        # canvas exported with full alpha but white strokes on black: by
+        # contract alpha wins whenever it carries ANY signal (max>0), so a
+        # uniformly-opaque alpha means the whole frame is marked for erase.
+        # Callers exporting opaque canvases must send RGB/gray masks instead.
         mask = np.zeros((40, 40, 4), dtype=np.uint8)
         mask[..., 3] = 255
         mask[5:15, 5:15, :3] = 255
         out = prepare_mask(mask, (40, 40))
-        # alpha is uniform 255 -> everything would be erased; luma path must win
-        # only when alpha carries no signal. alpha.max()>0 here, so alpha wins by
-        # contract — callers exporting opaque canvases must send RGB/gray masks.
         assert out.shape == (40, 40)
+        assert (out == 255).all()
 
     def test_nearest_resize_keeps_edges_binary(self):
         mask = np.zeros((10, 10), dtype=np.uint8)

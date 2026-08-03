@@ -152,7 +152,9 @@ test.describe("P7 — plans, export, admin, PWA", () => {
     expect(freeExport.watermark).toBe(true);
     const freePath = path.join(tmp, "free.mp4");
     await download(page, freeExport.downloadUrl, freePath);
-    expect(ffprobeDuration(freePath)).toBeGreaterThan(11.1); // 10s + 1.5s outro
+    const freeDuration = ffprobeDuration(freePath);
+    expect(freeDuration).toBeGreaterThan(11.1); // 10s + 1.5s outro
+    expect(freeDuration).toBeLessThan(12.1); // ...and nothing more
 
     // admin bumps this user to creator + adjusts credits (+50)
     const admin = await adminPage(browser);
