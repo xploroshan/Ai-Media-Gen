@@ -1,5 +1,11 @@
 # REVIEW.md — ultra-review record (CLAUDE.md §5)
 
+**Final verification (post-fix, official gate):** full Playwright E2E suite
+(17 tests, StubProvider, compose stack) green **3× consecutively** on the final
+code — 17/17 in 8.8 m, 17/17 in 4.7 m, 17/17 in 5.0 m. Worker pytest: 111
+passed / 1 skipped (live-fal smoke, env-gated). Vitest: 20 passed. Typecheck,
+lint, and production builds (`pnpm build`, worker image) clean.
+
 Adversarial multi-lens review of the full ReelForge v1 implementation
 (everything on `claude/validate-plan-build-isexe0`: `apps/web`, `services/worker`,
 `packages/shared`, `e2e`, `scripts`, `infra`), run after P0–P8 completed and the
